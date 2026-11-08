@@ -1,8 +1,8 @@
 [English](README.md) | **简体中文**
 
-# SoftBank Air 6 / A775 — OpenWrt MT6990
+# SoftBank Air 6 (软银 Air6 / A775) — OpenWrt MT6990
 
-面向 **SoftBank Air 6（A775）** 的 OpenWrt 适配与 CPE 管理界面。SoC 为 MediaTek MT6990 / T830，无线为 MT7990 三频，蜂窝模组为移远 RG620T-SBK，使用 eMMC A/B 槽。
+面向日本软银家用路由器 **SoftBank Air 6（软银 Air6，型号 A775）** 的 OpenWrt 适配与 CPE 管理界面。SoC 为 MediaTek MT6990 / T830，无线为 MT7990 三频，蜂窝模组为移远 RG620T-SBK，使用 eMMC A/B 槽。
 
 ## 源码基线、参考与致谢
 

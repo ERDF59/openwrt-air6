@@ -1,8 +1,8 @@
-# SoftBank Air 6 / A775 — OpenWrt MT6990
+# SoftBank Air 6 (软银 Air6 / A775) — OpenWrt MT6990
 
 **English** | [简体中文](README.zh-CN.md)
 
-OpenWrt platform adaptation and a CPE management interface for **SoftBank Air 6 (A775)**: MediaTek MT6990 / T830, MT7990 tri-band Wi-Fi, Quectel RG620T-SBK cellular modem, and eMMC A/B slots.
+OpenWrt platform adaptation and a CPE management interface specifically for the **SoftBank Air 6 (软银 Air6 / A775)** home router: MediaTek MT6990 / T830, MT7990 tri-band Wi-Fi, Quectel RG620T-SBK cellular modem, and eMMC A/B slots.
 
 ## Source baseline, references and acknowledgements
 
