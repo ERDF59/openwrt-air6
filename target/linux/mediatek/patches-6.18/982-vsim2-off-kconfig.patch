@@ -1,0 +1,17 @@
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -950,6 +950,14 @@
+ 	help
+ 	  Say Y here to enable MT6361 regulator support.
+ 	  This driver supports the control of the MT6361 PMIC regulators.
++
++config VSIM2_OFF
++	bool "Disable MT6361 vsim2 (eSIM) rail at boot"
++	depends on REGULATOR_MT6361
++	default y
++	help
++	  Disable the MT6361 LDO26/vsim2 regulator after boot so the
++	  soldered eSIM loses power.
+ 
+ config REGULATOR_MT6370
+ 	tristate "MT6370 SubPMIC Regulator"

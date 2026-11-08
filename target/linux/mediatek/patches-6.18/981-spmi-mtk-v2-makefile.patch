@@ -1,0 +1,7 @@
+--- a/drivers/spmi/Makefile
++++ b/drivers/spmi/Makefile
+@@ -8,3 +8,4 @@
+ obj-$(CONFIG_SPMI_HISI3670)	+= hisi-spmi-controller.o
+ obj-$(CONFIG_SPMI_MSM_PMIC_ARB)	+= spmi-pmic-arb.o
+ obj-$(CONFIG_SPMI_MTK_PMIF)	+= spmi-mtk-pmif.o
++obj-$(CONFIG_SPMI_MTK_PMIF_V2)	+= spmi-mtk-pmif_v2.o spmi-mtk-dbg_v2.o

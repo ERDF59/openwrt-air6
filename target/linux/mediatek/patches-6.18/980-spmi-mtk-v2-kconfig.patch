@@ -1,0 +1,14 @@
+--- a/drivers/spmi/Kconfig
++++ b/drivers/spmi/Kconfig
+@@ -54,4 +54,11 @@
+ 	  This is required for communicating with Mediatek PMICs and
+ 	  other devices that have the SPMI interface.
+ 
++config SPMI_MTK_PMIF_V2
++	tristate "Mediatek SPMI Controller V2 (PMIC Arbiter)"
++	depends on ARCH_MEDIATEK || COMPILE_TEST
++	help
++	  If you say yes here, support for the Mediatek SPMI PMIC Arbiter V2
++	  (used on MT6990/T830) is included.
++
+ endif

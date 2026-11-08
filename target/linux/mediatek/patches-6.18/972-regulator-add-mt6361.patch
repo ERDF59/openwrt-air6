@@ -1,0 +1,16 @@
+--- a/drivers/regulator/Kconfig
++++ b/drivers/regulator/Kconfig
+@@ -944,6 +944,13 @@
+ 	  2-channel buck with Thermal Shutdown and Overload Protection
+ 	  6-channel High PSRR and Low Dropout LDO.
+ 
++config REGULATOR_MT6361
++	tristate "MT6361 PMIC Regulator"
++	depends on MFD_MT6361
++	help
++	  Say Y here to enable MT6361 regulator support.
++	  This driver supports the control of the MT6361 PMIC regulators.
++
+ config REGULATOR_MT6370
+ 	tristate "MT6370 SubPMIC Regulator"
+ 	depends on MFD_MT6370

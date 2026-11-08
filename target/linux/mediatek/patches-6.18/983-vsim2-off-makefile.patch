@@ -1,0 +1,10 @@
+--- a/drivers/regulator/Makefile
++++ b/drivers/regulator/Makefile
+@@ -113,6 +113,7 @@
+ obj-$(CONFIG_REGULATOR_MT6359)	+= mt6359-regulator.o
+ obj-$(CONFIG_REGULATOR_MT6360) += mt6360-regulator.o
+ obj-$(CONFIG_REGULATOR_MT6361) += mt6361-regulator.o
++obj-$(CONFIG_VSIM2_OFF) += vsim2-off.o
+ obj-$(CONFIG_REGULATOR_MT6370) += mt6370-regulator.o
+ obj-$(CONFIG_REGULATOR_MT6380)	+= mt6380-regulator.o
+ obj-$(CONFIG_REGULATOR_MT6397)	+= mt6397-regulator.o

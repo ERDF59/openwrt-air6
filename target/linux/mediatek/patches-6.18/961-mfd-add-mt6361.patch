@@ -1,0 +1,20 @@
+--- a/drivers/mfd/Kconfig
++++ b/drivers/mfd/Kconfig
+@@ -1115,6 +1115,17 @@
+ 	  PMIC part includes 2-channel BUCKs and 2-channel LDOs
+ 	  LDO part includes 4-channel LDOs
+ 
++config MFD_MT6361
++	tristate "Mediatek MT6361 PMIC support"
++	depends on OF && SPMI
++	select REGMAP_SPMI
++	select REGMAP_IRQ
++	help
++	  Say yes here to add support for Mediatek MT6361 PMIC. This is
++	  a Power Management IC. This driver provides common support for
++	  accessing the device; additional drivers must be enabled in order
++	  to use the functionality of the device.
++
+ config MFD_MT6370
+ 	tristate "MediaTek MT6370 SubPMIC"
+ 	select MFD_CORE
