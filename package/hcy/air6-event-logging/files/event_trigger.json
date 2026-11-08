@@ -1,0 +1,7 @@
+{
+	"trigger_event": [
+		"NR5G_Attach_Request",
+		"NR5G_RRC_ConnRelease",
+		"\"nr_rachfailure\",5,0,0,1"
+	]
+}

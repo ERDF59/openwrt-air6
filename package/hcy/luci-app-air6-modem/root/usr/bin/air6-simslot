@@ -1,0 +1,30 @@
+#!/bin/sh
+# Keep the modem on the physical SIM slot (1); the eSIM (slot 2) stays inactive.
+. /lib/functions.sh
+
+config_load air6_simslot
+config_get_bool enabled main enabled 1
+config_get slot main slot 1
+config_get interval main interval 30
+
+[ "$enabled" = 1 ] || exit 0
+[ -n "$slot" ] || slot=1
+
+while :; do
+	cur="$(air6-modem-at AT+QUIMSLOT? 2>/dev/null | sed -n 's/.*+QUIMSLOT: *\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+	if [ -n "$cur" ] && [ "$cur" != "$slot" ]; then
+		logger -t air6-simslot "switching UIM slot $cur -> $slot"
+		air6-modem-at "AT+QUIMSLOT=$slot" >/dev/null 2>&1
+		sleep 3
+		band="$(air6-modem-at AT+AIR6BAND? 2>/dev/null)"
+		case "$band" in
+			*TARGET=EU25*)
+				logger -t air6-simslot "restoring EU25 band mask"
+				air6-modem-at 'AT+EPBSEH="00000002","00000080","080800D5000007A0","080800D5000001A000007000"' >/dev/null 2>&1
+				;;
+		esac
+		sleep 5
+		ifup modem5g 2>/dev/null || true
+	fi
+	sleep "$interval"
+done

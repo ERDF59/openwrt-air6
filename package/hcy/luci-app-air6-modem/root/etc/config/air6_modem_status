@@ -1,0 +1,8 @@
+config air6_modem_status 'main'
+	option start_delay '25'
+	option poll_seconds '5'
+	option registration_interval '20'
+	option radio_interval '60'
+	option identity_interval '1800'
+	option detail_interval '300'
+	option temp_interval '60'

@@ -1,0 +1,16 @@
+{
+	"luci-app-air6-modem": {
+		"description": "View and control the MT6990 integrated 5G modem",
+		"read": {
+			"ubus": {
+				"luci.air6modem": [ "get_status", "get_cells", "list_sms", "get_smsc", "get_network", "get_accel_stats" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"luci.air6modem": [ "send_sms", "delete_sms", "set_smsc", "run_at", "set_radio", "set_rat", "ifup", "ifdown" ]
+			},
+			"uci": [ "network" ]
+		}
+	}
+}

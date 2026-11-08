@@ -1,0 +1,93 @@
+{
+	"admin/air6modem": {
+		"title": "5G 模组",
+		"order": 25,
+		"action": {
+			"type": "view",
+			"path": "air6modem/overview_v10"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/overview": {
+		"title": "概览",
+		"order": 10,
+		"action": {
+			"type": "view",
+			"path": "air6modem/overview_v10"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/bands": {
+		"title": "频段",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "air6modem/bands_v3"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/accel": {
+		"title": "加速统计",
+		"order": 25,
+		"action": {
+			"type": "view",
+			"path": "air6modem/accel_v1"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/network": {
+		"title": "网络",
+		"order": 30,
+		"action": {
+			"type": "view",
+			"path": "air6modem/network_v5"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/sms": {
+		"title": "短信",
+		"order": 40,
+		"action": {
+			"type": "view",
+			"path": "air6modem/sms_v5"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	},
+	"admin/air6modem/terminal": {
+		"title": "AT 终端",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "air6modem/terminal_v5"
+		},
+		"depends": {
+			"acl": [
+				"luci-app-air6-modem"
+			]
+		}
+	}
+}

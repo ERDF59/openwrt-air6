@@ -1,0 +1,277 @@
+#!/usr/bin/env ucode
+/* LuCI 5G modem backend for Air6 (MT6990 / RG620T).
+ *
+ * Adapted from FiberHome AIR6's luci-app-5gmodem (Apache-2.0) for the
+ * QuecOpen firmware in this tree:
+ *   - the cellular interface is plain `wan` (proto ql_datacall)
+ *   - registration / RAT / signal are read with AT on atcid, because this
+ *     vendor mipc_wan_cli has no show_register_status / nw_get_signal
+ *   - band and cell locking needs the AIR6-only sample_nw helper, so those
+ *     methods are not exported here
+ */
+'use strict';
+
+import { popen, readfile } from 'fs';
+
+const CLI    = '/usr/bin/mipc_wan_cli';
+const ATCLI  = '/usr/bin/air6-modem-at';
+const SMSCLI = '/usr/bin/air6-modem-sms-send';
+const STATE  = '/tmp/air6-modem-status.state';
+const IFACE  = (function() {
+	let conf = readfile('/etc/config/network') || '';
+	return match(conf, /config interface 'modem5g'/) ? 'modem5g' : 'wan';
+})();
+
+/* 本固件没有 fiberhome 的 board_name；有厂商 mipc_wan_cli 才说明是这颗集成模组。 */
+function board_ok() {
+	return readfile(CLI) != null;
+}
+
+function quote(value) {
+	return `'${replace('' + value, "'", "'\\''")}'`;
+}
+
+function capture(argv, seconds) {
+	let command = join(' ', map(argv, quote));
+	/* busybox 的 timeout applet 在 air6_defconfig 里打开了；万一没编进去也照跑。 */
+	if (readfile('/usr/bin/timeout') != null)
+		command = `/usr/bin/timeout ${seconds || 12} ${command}`;
+	let pipe = popen(`${command} 2>&1`, 'r');
+	let output = pipe?.read?.('all') || '';
+	let code = pipe?.close?.();
+	return { output: trim(output), code: code || 0 };
+}
+
+function cli(option, arg) {
+	let argv = [ CLI, '--' + option ];
+	if (arg != null)
+		push(argv, '' + arg);
+	/* mipc_wan_cli 独占 ttyCMIPC6；和状态采集脚本共用一把锁，避免互相打断。 */
+	let runner = 'exec 9>/var/lock/luci-air6modem-control.lock; ' +
+		'/usr/bin/flock -n 9 || { echo __MODEM_LOCK_BUSY__; exit 75; }; ' +
+		'/bin/sleep 0.2; ' + join(' ', map(argv, quote));
+	let result = capture([ '/bin/sh', '-c', runner ], 15);
+	if (index(result.output, '__MODEM_LOCK_BUSY__') >= 0)
+		return { output: 'Modem command channel is busy; retry shortly', code: 75 };
+	return result;
+}
+
+function valid_at(command) {
+	return type(command) == 'string' && length(command) >= 2 && length(command) <= 512 &&
+		match(command, /^AT[+A-Z0-9?=,._*#;:" ()\/-]*$/i);
+}
+
+function at(command) {
+	if (!valid_at(command))
+		return { output: '', code: 22, error: 'AT command contains unsupported characters' };
+	return capture([ ATCLI, command ], 18);
+}
+
+function uci_get(option) {
+	return capture([ '/sbin/uci', '-q', 'get', option ], 3).output;
+}
+
+function network_state() {
+	let result = capture([ '/bin/ubus', 'call', `network.interface.${IFACE}`, 'status' ], 5);
+	let state = null;
+	try { state = json(result.output); } catch (e) {}
+	return state;
+}
+
+function cached_modem_state() {
+	let data = readfile(STATE) || '';
+	let state = {};
+	for (let line in split(data, '\n')) {
+		let pos = index(line, '=');
+		if (pos > 0)
+			state[substr(line, 0, pos)] = substr(line, pos + 1);
+	}
+	return state;
+}
+
+/* 厂商 MIPC 客户端独占一个 CCCI 控制口。开机阶段不要打一堆查询进去。 */
+function modem_settled(network) {
+	if (!network?.up || +network.uptime < 20)
+		return false;
+	let daemons = [ 'atcid', 'ql_netd', 'ql_ril_service' ];
+	for (let i = 0; i < length(daemons); i++) {
+		if (capture([ '/bin/pidof', daemons[i] ], 2).code != 0)
+			return false;
+	}
+	return true;
+}
+
+
+function status() {
+	if (!board_ok())
+		return { available: false, error: 'mipc_wan_cli not found on this firmware' };
+
+	let network_json = network_state();
+	if (!modem_settled(network_json))
+		return { available: true, initializing: true, network: network_json,
+			error: 'Modem is still completing the startup sequence' };
+
+	let cached = cached_modem_state();
+	let age = time() - +(cached.UPDATED || 0);
+	if (!cached.UPDATED || age > 180)
+		return { available: true, initializing: true, network: network_json,
+			error: 'Waiting for the modem status collector' };
+
+	return {
+		available: true,
+		cached: true,
+		cache_age: age,
+		imei: cached.IMEI || '',
+		imsi: cached.IMSI || '',
+		iccid: cached.ICCID || '',
+		sim: cached.SIM || 'unknown',
+		operator: cached.OPERATOR || '',
+		registration: cached.REGISTRATION || 'unknown',
+		register_detail: cached.REGISTERED || 'NO',
+		rat: cached.RAT_RAW || cached.RAT || 'UNKNOWN',
+		signal: cached.SIGNAL || '',
+		radio: cached.RADIO || '',
+		temperature: cached.TEMP || '',
+		band: cached.BAND || '',
+		pci: cached.PCI || '',
+		arfcn: cached.ARFCN || '',
+		tac: cached.TAC || '',
+		cellid: cached.CELLID || '',
+		apn: uci_get(`network.${IFACE}.apn`),
+		cesq: join(' · ', filter([
+			cached.RSSI ? `RSSI=${cached.RSSI} dBm` : null,
+			cached.RSRP ? `RSRP=${cached.RSRP} dBm` : null,
+			cached.RSRQ ? `RSRQ=${cached.RSRQ} dB` : null,
+			cached.SINR ? `SINR=${cached.SINR} dB` : null
+		], v => v != null)),
+		network: network_json
+	};
+}
+
+/* 加速统计：HNAT 绑定计数来自 mt6990-hwnat 的 proc，接口计数来自 /proc/net/dev。 */
+function hnat_stats() {
+	let text = readfile('/proc/mt6990_lan_accel') || '';
+	let out = { available: text != '' };
+
+	for (let line in split(text, '\n')) {
+		let m = match(line, /^([a-z0-9_]+)\s+(-?\d+)$/);
+		if (m)
+			out[m[1]] = +m[2];
+	}
+	return out;
+}
+
+function interface_stats() {
+	let text = readfile('/proc/net/dev') || '';
+	let out = [];
+
+	for (let line in split(text, '\n')) {
+		let m = match(line, /^\s*([^:\s]+):\s*(.*)$/);
+		if (!m || !match(m[1], /^(eth\d+|br-lan|ccmni\d+|ra0|rai0|rax0)$/))
+			continue;
+
+		let v = split(trim(m[2]), /\s+/);
+		if (length(v) < 16)
+			continue;
+
+		push(out, {
+			name: m[1],
+			rx_bytes: +v[0], rx_packets: +v[1], rx_errors: +v[2], rx_dropped: +v[3],
+			tx_bytes: +v[8], tx_packets: +v[9], tx_errors: +v[10], tx_dropped: +v[11]
+		});
+	}
+	return out;
+}
+
+const methods = {
+	get_status: { call: function() { return status(); } },
+
+	get_accel_stats: { call: function() {
+		return { hnat: hnat_stats(), interfaces: interface_stats(), ts: time() };
+	} },
+
+	/* AT+ECELL 是 MT6990 私有命令；不支持时返回原始错误，页面显示空表。 */
+	get_cells: { call: function() {
+		if (!modem_settled(network_state()))
+			return { initializing: true, serving: { output: 'Waiting for modem startup to settle' }, engineering: { output: '' } };
+		return {
+			serving: at('AT+ECELL'),
+			engineering: at('AT+EINFO?'),
+			note: 'Channel information comes from the read-only AT+ECELL response.'
+		};
+	} },
+
+	list_sms: { call: function() {
+		let mode = at('AT+CMGF=1');
+		let charset = at('AT+CSCS="UCS2"');
+		let storage = at('AT+CPMS?');
+		let messages = at('AT+CMGL="ALL"');
+		return {
+			success: mode.code == 0 && charset.code == 0 && messages.code == 0,
+			storage: storage.output,
+			output: messages.code != 0 ? (messages.output || 'SMS query failed') :
+				(index(messages.output, '+CMGL:') >= 0 ? messages.output : 'No stored messages')
+		};
+	} },
+
+	get_smsc: { call: function() { return at('AT+CSCA?'); } },
+
+	delete_sms: { args: { index: 0 }, call: function(req) {
+		let index = +req.args?.index;
+		if (index < 0 || index > 65535) return { code: 22, error: 'Invalid SMS index' };
+		return at(`AT+CMGD=${index}`);
+	} },
+
+	set_smsc: { args: { number: '' }, call: function(req) {
+		let number = '' + (req.args?.number || '');
+		if (!match(number, /^\+?[0-9]{3,20}$/)) return { code: 22, error: 'Invalid SMS center number' };
+		return at(`AT+CSCA="${number}"`);
+	} },
+
+	send_sms: { args: { number: '', text: '' }, call: function(req) {
+		let number = '' + (req.args?.number || '');
+		let body = '' + (req.args?.text || '');
+		if (!match(number, /^\+?[0-9]{3,20}$/)) return { code: 22, error: 'Invalid recipient number' };
+		if (!length(body) || length(body) > 160 || !match(body, /^[ -~]*$/))
+			return { code: 22, error: 'Use 1-160 printable GSM/ASCII characters' };
+		let result = capture([ SMSCLI, number, body ], 25);
+		let accepted = result.code == 0 && index(result.output, 'qlril') >= 0;
+		return {
+			output: result.output,
+			code: accepted ? 0 : 5,
+			success: accepted,
+			error: accepted ? null : 'Modem did not confirm SMS submission'
+		};
+	} },
+
+	run_at: { args: { command: '' }, call: function(req) { return at(req.args?.command || ''); } },
+
+	get_network: { call: function() {
+		let state = capture([ '/bin/ubus', 'call', `network.interface.${IFACE}`, 'status' ], 5);
+		let config = capture([ '/sbin/uci', '-q', 'show', `network.${IFACE}` ], 5);
+		let cached = cached_modem_state();
+		return { interface: IFACE, status: state.output, config: config.output,
+			radio: cached.RADIO || '', rat: cached.RAT_RAW || cached.RAT || 'UNKNOWN', cached: true,
+			apn: uci_get(`network.${IFACE}.apn`),
+			plmn: uci_get(`network.${IFACE}.plmn`),
+			iptype: uci_get(`network.${IFACE}.iptype`),
+			auth: uci_get(`network.${IFACE}.auth`),
+			mtu: uci_get(`network.${IFACE}.mtu`) };
+	} },
+
+	set_radio: { args: { enabled: true }, call: function(req) {
+		return cli('nw_radio_state_set', req.args?.enabled ? '1' : '0');
+	} },
+
+	set_rat: { args: { mode: 21 }, call: function(req) {
+		let mode = +req.args?.mode;
+		if (index([ 3, 15, 19, 21 ], mode) < 0) return { code: 22, error: 'Invalid RAT mode' };
+		return cli('nw_set_rat', mode);
+	} },
+
+	ifup: { call: function() { return capture([ '/sbin/ifup', IFACE ], 25); } },
+	ifdown: { call: function() { return capture([ '/sbin/ifdown', IFACE ], 25); } }
+};
+
+return { 'luci.air6modem': methods };
+

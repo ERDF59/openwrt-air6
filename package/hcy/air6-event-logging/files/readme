@@ -1,0 +1,52 @@
+module name: Event Trigger Logging
+functional description:
+The mdlog is automatically saved when events are triggered. 
+Define required events, capture URC information from the mipc channel, and parse it. 
+If there are concerned events, the mdlog when the event occurs is automatically saved for problem analysis.
+
+1. Function opening and closing
+(1) Function on
+adb shell uci set system.@system[0].md_start='1'
+adb shell uci set system.@system[0].md_save_mode='3'  //PLS mode
+adb shell uci set system.@system[0].md_dumpback_mode='0'  //0:full dump(raw:492M,.bin:~96M) 1:mini dump(raw:162M,.bin:~14M)
+adb shell uci commit
+adb shell reload_config
+adb shell sync
+ 
+adb shell /etc/init.d/mdlogger reload
+
+(2) Function off
+adb shell uci set system.@system[0].md_start='0'
+OR 
+adb shell uci set system.@system[0].md_save_mode='1'  //USB mode
+
+adb shell uci commit
+adb shell reload_config
+adb shell sync
+
+2. Event addition
+(1)Static add before compile
+/quectel/package/event_trigger_logging/files/event_trigger.json
+(2)Dynamic addition at run time
+/etc/event_trigger.json  //Added in this json file
+/etc/init.d/event_trigger_logging restart  //Restart service to take effect
+
+3. recycle
+(1) md_cyclic_size
+get:
+adb shell "uci show system | grep md_cyclic_size"
+
+default 200M,any more than that will start with the oldest files.
+The modem log can be up to 200M + a file size.
+set:
+adb shell uci set system.@system[0].md_cyclic_size='200'
+
+(2) md_log_size
+The size of the modem log file can be set as follows:
+get:
+adb shell "uci show system | grep md_log_size"
+
+default 20M
+set:
+adb shell uci set system.@system[0].md_log_size='20'
+

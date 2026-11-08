@@ -1,0 +1,115 @@
+#!/bin/sh
+# Air6 频段锁定（调厂商 /bin/sample_nw）
+#
+#   air6-modem-lock get                 读当前 LTE / NR 频段掩码
+#   air6-modem-lock apply 1,8,41,42 3,28,77,79
+#   air6-modem-lock reset               恢复杂表（SBK 全集）
+#
+# 移植自 AIR6 的 air6-modem-chain-lock，接口名改为 wan，并用 busybox 的 timeout（若有）。
+
+set -u
+SAMPLE=/bin/sample_nw
+LOCK=/var/lock/air6-modem-band.lock
+IFACE=wan
+LTE_ALLOWED='1 8 41 42'
+NR_ALLOWED='3 28 77 79'
+
+die() { echo "ERROR=$*"; exit 22; }
+
+timeout_run() {   # timeout_run <seconds> <file/>
+    if [ -x /usr/bin/timeout ]; then
+        timeout "$1" "$SAMPLE"
+    else
+        "$SAMPLE"
+    fi
+}
+
+band_selected() {
+    hex="$1" band="$2"
+    bit=$((band - 1)); chunk=$((bit / 32)); shift=$((bit % 32))
+    part="$(printf '%s' "$hex" | cut -c "$((chunk * 8 + 1))-$((chunk * 8 + 8))")"
+    [ "${#part}" -eq 8 ] || return 1
+    [ $(( 0x$part & (1 << shift) )) -ne 0 ]
+}
+
+mask_to_bands() {   # mask_to_bands <hex> <allowed list>
+    hex="$1"; out=""
+    for b in $2; do
+        band_selected "$hex" "$b" && out="${out}${out:+,}$b"
+    done
+    printf '%s' "$out"
+}
+
+read_masks() {
+    raw="$(printf '0\n19\n0\n19\n1\n1\n-1\n' | timeout_run 40 2>&1)"
+    LTE_MASK="$(printf '%s\n' "$raw" | sed -n 's/.*lte band info[[:space:]]*=[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | head -n 1)"
+    NR_MASK="$(printf '%s\n' "$raw" | sed -n 's/.*nr band info[[:space:]]*=[[:space:]]*\([0-9A-Fa-f]*\).*/\1/p' | head -n 1)"
+    [ -n "$LTE_MASK" ] && [ -n "$NR_MASK" ] || die '无法读取频段掩码'
+}
+
+validate() {   # validate <list> <allowed> <label>
+    list="$1"; allowed="$2"; label="$3"
+    [ -n "$list" ] || die "$label 至少选一个频段"
+    oldifs="$IFS"; IFS=,
+    set -- $list
+    IFS="$oldifs"
+    for b in "$@"; do
+        case " $allowed " in
+            *" $b "*) ;;
+            *) die "$label 不支持频段 $b" ;;
+        esac
+    done
+}
+
+apply_bands() {   # apply_bands <lte list> <nr list>
+    timeout_run 60 <<EOF 2>&1
+0
+44
+0
+20
+1
+1
+$(printf '%s\n' "$1" | tr ',' '\n')
+y
+20
+1
+2
+$(printf '%s\n' "$2" | tr ',' '\n')
+y
+1
+-1
+EOF
+}
+
+exec 9>"$LOCK"
+flock 9 || die '无法锁定模组控制通道'
+
+case "${1:-}" in
+    get)
+        read_masks
+        printf 'LTE_MASK=%s\nNR_MASK=%s\n' "$LTE_MASK" "$NR_MASK"
+        printf 'LTE=%s\nNR=%s\n' "$(mask_to_bands "$LTE_MASK" "$LTE_ALLOWED")" "$(mask_to_bands "$NR_MASK" "$NR_ALLOWED")"
+        ;;
+    apply)
+        lte="${2:-}"; nr="${3:-}"
+        validate "$lte" "$LTE_ALLOWED" '4G'
+        validate "$nr" "$NR_ALLOWED" '5G'
+        was_up=false
+        ubus call network.interface.$IFACE status 2>/dev/null | grep -q '"up": *true' && was_up=true
+        $was_up && ifdown $IFACE >/dev/null 2>&1 && sleep 3
+        out="$(apply_bands "$lte" "$nr")"
+        printf '%s\n' "$out" | grep -aE 'success|error' | head -5
+        echo "$out" | grep -q 'set or restore band success' || { $was_up && ifup $IFACE >/dev/null 2>&1; die '模组拒绝了这组频段'; }
+        read_masks
+        printf 'LTE_MASK=%s\nNR_MASK=%s\nLTE=%s\nNR=%s\n' \
+            "$LTE_MASK" "$NR_MASK" "$(mask_to_bands "$LTE_MASK" "$LTE_ALLOWED")" "$(mask_to_bands "$NR_MASK" "$NR_ALLOWED")"
+        $was_up && ifup $IFACE >/dev/null 2>&1
+        exit 0
+        ;;
+    reset)
+        exec "$0" apply "$(printf '%s' "$LTE_ALLOWED" | tr ' ' ',')" "$(printf '%s' "$NR_ALLOWED" | tr ' ' ',')"
+        ;;
+    *)
+        die 'usage: get | apply <lte> <nr> | reset'
+        ;;
+esac
