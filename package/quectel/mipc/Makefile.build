@@ -1,0 +1,94 @@
+
+CC = gcc
+CXX = g++
+AR = ar
+
+INCLUDE_PATH := -Iinclude/ -Iinclude/common -Iinclude/msg -Iinclude/external
+SRC = src
+OUT = out
+STATIC_CXXFLAGS = -static
+
+LDFLAGS =
+EXTRA_CFLAGS = ${MIPC_CFLAGS}
+
+
+ALL = ${OUT}/radio_off
+ALL += ${OUT}/radio_on
+ALL += ${OUT}/hw_radio_off
+ALL += ${OUT}/hw_radio_on
+ALL += ${OUT}/dipc_conf
+ALL += ${OUT}/CHT_3G_setting
+ALL += ${OUT}/CHT_4G_setting
+ALL += ${OUT}/CHT_act_data_call
+ALL += ${OUT}/ERICSSON_3G_setting
+ALL += ${OUT}/ERICSSON_4G_setting
+ALL += ${OUT}/ERICSSON_ENDC_setting
+ALL += ${OUT}/ERICSSON_act_data_call
+ALL += ${OUT}/deact_data_call
+ALL += ${OUT}/libmipc_msg.so
+################################################################################
+all: $(ALL)
+
+
+
+################################################################################
+
+clean:
+	@rm -rf $(OUT)
+
+################################################################################
+MIPC_COMMON_SRCDIR = ${SRC}/common
+MIPC_COMMON_OUTDIR = ${OUT}/common
+MIPC_COMMON_SRC = $(filter-out ${MIPC_COMMON_SRCDIR}/platform_windows.c, $(wildcard ${MIPC_COMMON_SRCDIR}/*.c))
+MIPC_COMMON_OBJ = $(patsubst %.c,${MIPC_COMMON_OUTDIR}/%.o,$(notdir ${MIPC_COMMON_SRC}))
+MIPC_COMMON_CFLAGS = ${CFLAGS} ${EXTRA_CFLAGS} ${DEBUG} ${UNIT_TEST} -D_LINUX -fPIC ${INCLUDE_PATH}
+
+${MIPC_COMMON_OUTDIR}/%.o: ${MIPC_COMMON_SRCDIR}/%.c
+	@mkdir -p ${MIPC_COMMON_OUTDIR}
+	@${CC} ${MIPC_COMMON_CFLAGS} -o $@ -c $<
+################################################################################
+MIPC_EXTERNAL_SRCDIR = ${SRC}/external
+MIPC_EXTERNAL_OUTDIR = ${OUT}/external
+MIPC_EXTERNAL_SRC = $(wildcard ${MIPC_EXTERNAL_SRCDIR}/*.c)
+MIPC_EXTERNAL_OBJ = $(patsubst %.c,${MIPC_EXTERNAL_OUTDIR}/%.o,$(notdir ${MIPC_EXTERNAL_SRC}))
+MIPC_EXTERNAL_CFLAGS = ${CFLAGS} ${EXTRA_CFLAGS} ${DEBUG} ${UNIT_TEST} -D_LINUX -fPIC ${INCLUDE_PATH}
+
+${MIPC_EXTERNAL_OUTDIR}/%.o: ${MIPC_EXTERNAL_SRCDIR}/%.c
+	@mkdir -p ${MIPC_EXTERNAL_OUTDIR}
+	@${CC} ${MIPC_EXTERNAL_CFLAGS} -o $@ -c $<
+################################################################################
+MIPC_MSG_SRCDIR = ${SRC}/msg
+MIPC_MSG_OUTDIR = ${OUT}/msg
+MIPC_MSG_SRC = $(wildcard ${MIPC_MSG_SRCDIR}/*.c)
+MIPC_MSG_OBJ = $(patsubst %.c,${MIPC_MSG_OUTDIR}/%.o,$(notdir ${MIPC_MSG_SRC}))
+MIPC_MSG_CFLAGS = ${CFLAGS} ${EXTRA_CFLAGS} ${DEBUG} ${UNIT_TEST} -D_LINUX -fPIC ${INCLUDE_PATH}
+MIPC_MSG_SHARED_LIB = ${OUT}/libmipc_msg.so
+MIPC_MSG_STATIC_LIB = ${OUT}/libmipc_msg.a
+
+${MIPC_MSG_OUTDIR}/%.o: ${MIPC_MSG_SRCDIR}/%.c
+	@mkdir -p ${MIPC_MSG_OUTDIR}
+	@${CC} ${MIPC_MSG_CFLAGS} -o $@ -c $<
+
+${MIPC_MSG_SHARED_LIB}: ${MIPC_MSG_OBJ} ${MIPC_COMMON_OBJ} ${MIPC_EXTERNAL_OBJ}
+	@mkdir -p ${OUT}
+	@${CC} -o $@ -shared $^ $(LDFLAGS)
+
+${MIPC_MSG_STATIC_LIB}: ${MIPC_MSG_OBJ} ${MIPC_COMMON_OBJ} ${MIPC_EXTERNAL_OBJ}
+	@mkdir -p ${OUT}
+	@${AR} rcs $@ $^
+
+################################################################################
+MIPC_TEST_MSG_CFLAGS = ${CFLAGS} ${EXTRA_CFLAGS} ${DEBUG} -D_LINUX ${INCLUDE_PATH}
+test_files			:= $(wildcard test/*.c)
+out_test_files		:= $(test_files:test/%.c=${OUT}/%)
+$(out_test_files): $(test_files) ${MIPC_MSG_STATIC_LIB}
+	@${CC} ${MIPC_TEST_MSG_CFLAGS} -o $@ -L${OUT} $< -lmipc_msg -lpthread -lc -lgcc_eh -static $(LDFLAGS)
+
+${OUT}/test_msg_shared: test/test_msg.c ${MIPC_MSG_SHARED_LIB}
+	@${CC} ${MIPC_TEST_MSG_CFLAGS} -o $@ -L${OUT} test/test_msg.c -lmipc_msg -lpthread $(LDFLAGS)
+
+#sample
+sample_files		:= $(wildcard sample/*.c)
+out_sample_files	:= $(sample_files:sample/%.c=${OUT}/%)
+$(out_sample_files): $(sample_files) ${MIPC_MSG_STATIC_LIB}
+	@${CC} ${MIPC_TEST_MSG_CFLAGS} -o $@ -L${OUT} $< -lmipc_msg -lpthread -lc -lgcc_eh -static $(LDFLAGS)

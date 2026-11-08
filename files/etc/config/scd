@@ -1,0 +1,4 @@
+config setting "features"
+	option ap_time_to_modem 1
+	option modem_time_to_ap 1
+	option modem_reboot_ap 1

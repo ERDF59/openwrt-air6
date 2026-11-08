@@ -1,0 +1,164 @@
+#!/bin/sh
+# Air6 front-panel LEDs on the AW9523B, using the stock logical layout:
+# power, status, wifi, sim, mobile (4G/5G) and signal level bars.
+# LEDs configured in LuCI (System -> LED Configuration) are left alone.
+
+LEDS=/sys/class/leds
+STATE=/tmp/air6-modem-status.state
+TAG=air6-panel-led
+
+POWER=green:power
+STATUS=green:status
+WIFI_G=green:wlan
+WIFI_R=red:wlan
+WIFI_B=blue:wlan
+SIM_G=green:sim
+SIM_R=red:sim
+MOB_G=green:mobile
+MOB_R=red:mobile
+MOB_B=blue:mobile
+SIG1_B=blue:signal-1
+SIG2_B=blue:signal-2
+SIG3_B=blue:signal-3
+SIG1_R=red:signal-1
+
+ALL="$POWER $STATUS $WIFI_G $WIFI_R $WIFI_B $SIM_G $SIM_R $MOB_G $MOB_R $MOB_B $SIG1_B $SIG2_B $SIG3_B $SIG1_R"
+
+set_b() {
+	[ -w "$LEDS/$1/brightness" ] && echo "$2" > "$LEDS/$1/brightness"
+}
+
+refresh_user_leds() {
+	local s v
+	USER_LEDS=' '
+	for s in $(uci -q show system 2>/dev/null | sed -n 's/^system\.\([^.=]*\)\.sysfs=.*/\1/p'); do
+		v="$(uci -q get "system.$s.sysfs")"
+		[ -n "$v" ] && USER_LEDS="$USER_LEDS$v "
+	done
+}
+
+user_owns() {
+	case "$USER_LEDS" in
+		*" $1 "*) return 0 ;;
+	esac
+	return 1
+}
+
+put() {
+	user_owns "$1" || set_b "$1" "$2"
+}
+
+off_all() {
+	local l
+	for l in $ALL; do
+		user_owns "$l" || set_b "$l" 0
+	done
+}
+
+wifi_up() {
+	local n m
+	for n in /sys/class/net/phy*-ap* /sys/class/net/ra0 /sys/class/net/rai0; do
+		[ -e "$n" ] || continue
+		m="$(readlink -f "$n/master" 2>/dev/null)"
+		case "$m" in
+			*/br-lan) [ "$(cat "$n/operstate" 2>/dev/null)" = up ] && return 0 ;;
+		esac
+	done
+	return 1
+}
+
+get_state() {
+	sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n 1
+}
+
+trap 'off_all; exit 0' TERM INT EXIT
+
+refresh_user_leds
+if ! user_owns "$STATUS"; then
+	echo timer > "$LEDS/$STATUS/trigger" 2>/dev/null
+	echo 800 > "$LEDS/$STATUS/delay_on" 2>/dev/null
+	echo 800 > "$LEDS/$STATUS/delay_off" 2>/dev/null
+fi
+put "$POWER" 255
+put red:power 0
+
+logger -t "$TAG" "panel LED service started"
+
+while :; do
+	refresh_user_leds
+
+	if [ "$(uci -q get system.@system[-1].leds_off)" = 1 ]; then
+		for l in $ALL; do set_b "$l" 0; done
+		sleep 5
+		continue
+	fi
+
+	put "$POWER" 255
+	put red:power 0
+	if ! user_owns "$STATUS"; then
+		case "$(cat "$LEDS/$STATUS/trigger" 2>/dev/null)" in
+			*"[timer]"*) ;;
+			*)
+				echo timer > "$LEDS/$STATUS/trigger" 2>/dev/null
+				echo 800 > "$LEDS/$STATUS/delay_on" 2>/dev/null
+				echo 800 > "$LEDS/$STATUS/delay_off" 2>/dev/null
+				;;
+		esac
+	fi
+
+	if wifi_up; then
+		put "$WIFI_G" 255
+	else
+		put "$WIFI_G" 0
+	fi
+	put "$WIFI_R" 0
+	put "$WIFI_B" 0
+
+	sim="$(get_state SIM)"
+	reg="$(get_state REGISTERED)"
+	rat="$(get_state RAT)"
+	rsrp="$(get_state RSRP)"
+
+	if [ "$sim" = MIPC_SIM_STATUS_COMPLETE_READY ]; then
+		put "$SIM_G" 255
+		put "$SIM_R" 0
+	else
+		put "$SIM_G" 0
+		put "$SIM_R" 255
+	fi
+
+	put "$MOB_G" 0
+	put "$MOB_R" 0
+	put "$MOB_B" 0
+	put "$SIG1_B" 0
+	put "$SIG2_B" 0
+	put "$SIG3_B" 0
+	put "$SIG1_R" 0
+
+	if [ "$reg" = YES ] && [ "$sim" = MIPC_SIM_STATUS_COMPLETE_READY ]; then
+		case "$rat" in
+			5G) put "$MOB_B" 255 ;;
+			*)  put "$MOB_G" 255 ;;
+		esac
+		case "$rsrp" in
+			-*[!0-9]*|'')
+				put "$SIG1_R" 255
+				;;
+			*)
+				if [ "$rsrp" -ge -85 ]; then
+					put "$SIG3_B" 255
+				elif [ "$rsrp" -ge -95 ]; then
+					put "$SIG2_B" 255
+				elif [ "$rsrp" -ge -110 ]; then
+					put "$SIG1_B" 255
+				else
+					put "$SIG1_R" 255
+				fi
+				;;
+		esac
+	else
+		put "$MOB_R" 255
+	fi
+
+	sleep 5
+done

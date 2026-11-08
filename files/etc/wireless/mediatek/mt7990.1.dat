@@ -1,0 +1,13 @@
+#The word of "Default" must not be removed
+Default
+BN0_profile_path=/etc/wireless/mediatek/mt7990.b0.dat
+BN1_profile_path=/etc/wireless/mediatek/mt7990.b1.dat
+BN2_profile_path=/etc/wireless/mediatek/mt7990.b2.dat
+E2pAccessMode=4
+TestModeEn=0
+# No WHNAT plugin exists for MT7990/WARP v2. Keep the vendor pure-HW path
+# off: WHNAT=0 races the legacy SW tag hook, which binds Wi-Fi flows to the
+# ADMA egress and blackholes traffic. Wi-Fi stays on the CPU fast path.
+WHNAT=1
+MloV1=0
+WtblDupNum=0

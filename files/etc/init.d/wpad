@@ -1,0 +1,9 @@
+#!/bin/sh /etc/rc.common
+# The packaged wpad service runs hostapd as an unprivileged, jailed user,
+# which the vendor MT7990 driver cannot use through its global control
+# socket. mtwifi starts the same hostapd binary as root instead.
+START=19
+STOP=21
+
+start_service() { return 0; }
+stop_service() { return 0; }

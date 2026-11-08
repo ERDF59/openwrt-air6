@@ -1,0 +1,18 @@
+
+# flags:
+# -DENABLE_MIPC_SUPPORT_CHECKER		: Enable MIPC support checker
+# -DENABLE_TRM						: Enable libtrm.
+# -DSLEEP_FOR_UNREGISTERED_PROCESS	: Sleep 30s when the process is not registered during find com.
+# -DWAKEUP_ALL_MIPC_CALLBACK		: Wakeup all mipc callback after port is closed.
+# -DWAIT_MD_READY					: Wait MD ready before open com.
+# -DPORT_MAP_FILE=mipc_port.def		: Use mipc_port.def to define port.
+
+MIPC_CFLAGS := -DENABLE_MIPC_SUPPORT_CHECKER -DENABLE_TRM -DSLEEP_FOR_UNREGISTERED_PROCESS -DPORT_MAP_FILE=mipc_port.def -DWAIT_MD_READY
+LDFLAGS = -Wl,--no-as-needed -ldl -lpthread
+STATIC_CXXFLAGS = -static-libstdc++
+
+all :
+	make -f Makefile.build MIPC_CFLAGS="$(MIPC_CFLAGS)" STATIC_CXXFLAGS=$(STATIC_CXXFLAGS) LDFLAGS="$(LDFLAGS)"
+
+clean:
+	make -f Makefile.build clean

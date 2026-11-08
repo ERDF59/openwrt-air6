@@ -1,0 +1,32 @@
+#!/bin/sh
+
+SERVICE=air6-network-led
+STATE=/tmp/air6-network-led.state
+LEDS='air6:wifi air6:4g-good air6:4g-fair air6:4g-bad air6:5g-bad air6:5g-fair air6:5g-good'
+
+all_off() {
+	local led
+	for led in $LEDS; do
+		[ -w "/sys/class/leds/$led/brightness" ] && echo 0 >"/sys/class/leds/$led/brightness"
+	done
+}
+
+case "${1:-status}" in
+	start|stop|restart)
+		/etc/init.d/$SERVICE "$1"
+		;;
+	off)
+		all_off
+		;;
+	status)
+		/etc/init.d/$SERVICE status
+		[ ! -r "$STATE" ] || cat "$STATE"
+		;;
+	log)
+		logread | grep 'air6-network-led' | tail -n "${2:-100}"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|off|status|log [lines]}" >&2
+		exit 2
+		;;
+esac

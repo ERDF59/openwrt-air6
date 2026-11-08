@@ -1,0 +1,25 @@
+#!/bin/sh
+# Install this unit's factory Wi-Fi calibration (usr_factory block: e2p=<block>,<size>).
+dst=/etc/air6-vendor618/firmware
+mkdir -p "$dst"
+
+raw=""
+. /lib/functions/system.sh 2>/dev/null
+raw=$(find_mmc_part raw1 2>/dev/null)
+[ -b "$raw" ] || raw=/dev/mmcblk0p40
+
+blk=$(dd if="$raw" bs=4096 count=1 2>/dev/null | tr -d '\000' | sed -n 's/^e2p=\([0-9][0-9]*\),.*/\1/p' | head -1)
+size=$(dd if="$raw" bs=4096 count=1 2>/dev/null | tr -d '\000' | sed -n 's/^e2p=[0-9][0-9]*,\([0-9][0-9]*\).*/\1/p' | head -1)
+
+if [ -n "$blk" ] && [ -n "$size" ] && [ "$size" -gt 1024 ] && [ "$size" -le 1048576 ]; then
+	off=$((blk * 262144))
+	dd if="$raw" of="$dst/e2p.new" bs=1 skip="$off" count="$size" 2>/dev/null
+	if [ -s "$dst/e2p.new" ]; then
+		mv "$dst/e2p.new" "$dst/e2p"
+	fi
+fi
+
+if [ ! -s "$dst/e2p" ]; then
+	cp /etc/wireless/mediatek/e2p "$dst/e2p"
+fi
+chmod 0644 "$dst/e2p"

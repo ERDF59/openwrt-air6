@@ -1,0 +1,44 @@
+#!/bin/sh
+set -e
+cfg=/etc/air6-wifi
+mod=/usr/lib/air6-wifi/modules
+/usr/sbin/air6-factory-e2p
+mkdir -p /tmp/air6-wifi/wireless
+cp -a /etc/wireless/mediatek/. /tmp/air6-wifi/wireless/
+[ -e /etc/wireless ] || ln -sfn /tmp/air6-wifi/wireless /etc/wireless
+fw=/tmp/air6-wifi/firmware
+mkdir -p "$fw"
+for f in /lib/firmware/WIFI_*.bin /lib/firmware/MT7990_EEPROM*.bin /lib/firmware/MT7990_iPAiLNA_EEPROM.bin; do
+	[ -e "$f" ] && ln -sfn "$f" "$fw/$(basename "$f")"
+done
+# l1profile.dat is requested by name through the firmware loader
+ln -sfn /etc/wireless/l1profile.dat "$fw/l1profile.dat"
+# The MT7990 driver reads its profile and EEPROM from the firmware search
+# path at module load and again whenever the main netdev is re-opened. Expose
+# the live profile directory instead of a boot-time copy, otherwise channel /
+# bandwidth changes written by the mtwifi service never reach the driver.
+rm -rf "$fw/mediatek"
+ln -sfn /etc/wireless/mediatek "$fw/mediatek"
+for f in /etc/wireless/mediatek/*; do
+	[ -e "$f" ] || continue
+	b=$(basename "$f")
+	rm -f "$fw/$b"
+	ln -sfn "$f" "$fw/$b"
+done
+if [ -e /sys/module/firmware_class/parameters/path ]; then
+	echo "$fw" > /sys/module/firmware_class/parameters/path
+fi
+modprobe cfg80211 2>/dev/null || true
+for name in wifi_md_coex mtk_warp mt_wifi_cmn mt_wifi mtk_hwifi connac_if mtk_pci mtk_wed mt7991; do
+	echo "load $name"
+	[ -e "/sys/module/$name" ] || insmod "$mod/$name.ko" || true
+done
+echo "load mt7990"
+insmod "$mod/mt7990.ko" option_type=6 rro_enable=0 intr_option_set=1 || true
+n=0
+until [ -d /sys/class/net/ra0 ] || [ "$n" -ge 15 ]; do
+	n=$((n+1)); sleep 1
+done
+if [ -d /sys/class/net/ra0 ]; then
+	echo "wifi interface ready"
+fi

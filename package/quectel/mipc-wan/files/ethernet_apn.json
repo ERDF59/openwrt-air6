@@ -1,0 +1,16 @@
+[
+	{
+		"mcc": 1,
+		"mnc": 1,
+		"apn": "ethernet",
+		"protocol": 5,
+		"roaming_protocol": 5
+	},
+	{
+		"mcc": 466,
+		"mnc": 97,
+		"apn": "ethernet",
+		"protocol": 5,
+		"roaming_protocol": 5
+	},
+]

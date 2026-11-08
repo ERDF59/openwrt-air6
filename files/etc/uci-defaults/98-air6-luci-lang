@@ -1,0 +1,5 @@
+#!/bin/sh
+[ "$PKG_UPGRADE" = "1" ] && exit 0
+uci set luci.main.lang=zh_cn
+uci commit luci
+exit 0

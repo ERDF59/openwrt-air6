@@ -1,0 +1,8 @@
+#!/bin/sh /etc/rc.common
+START=01
+start() {
+ # The original driver exclusively owns Wi-Fi. No fallback or reboot timer.
+ mkdir -p /etc/air6-vendor618
+ touch /etc/air6-vendor618/enabled /tmp/air6-vendor618-active
+ rm -f /etc/air6-vendor618/boot-pending
+}

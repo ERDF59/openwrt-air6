@@ -1,0 +1,12 @@
+#!/bin/sh /etc/rc.common
+# Load the vendor MT7990 Wi-Fi stack before mtwifi/netifd touch the radios.
+START=15
+STOP=05
+
+start() {
+	/usr/sbin/air6-wifi-start >/tmp/air6-wifi-modules.log 2>&1 || true
+}
+
+stop() {
+	return 0
+}

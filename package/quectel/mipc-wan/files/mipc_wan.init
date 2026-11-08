@@ -1,0 +1,101 @@
+#!/bin/sh /etc/rc.common
+
+. /usr/share/libubox/jshn.sh
+
+START=99
+USE_PROCD=1
+
+check_sim() {
+
+	# TBD: Check this step is necessary
+	mipc_wan_cli --nw_radio_state_set 1
+
+	apn_data=`(mipc_wan_cli --apn_provision_by_sim)`
+	[ -z "$apn_data" ] && return
+	json_load "$apn_data"
+	json_get_var apn apn
+	logger -t apn "apn is $apn"
+	[ -z "$apn" ] && return
+
+	json_get_var auth_type auth_type
+	json_get_var user user
+	json_get_var password password
+	json_get_var protocol protocol
+	json_get_var iaapn iaapn
+	json_get_var iaprotocol iaprotocol
+	json_get_var iaroaming_protocol iaroaming_protocol
+	json_get_var roaming_protocol roaming_protocol
+	json_get_var rattype rattype
+	json_get_var plmn plmn
+	json_get_var mtu mtu
+	json_get_var dataroaming dataroaming
+
+	logger -t apn "$1 & $plmn"
+	[ "$plmn" = "$1" ] && return
+
+	uci batch <<-EOF
+		set network.wan.proto='mipc'
+		set network.wan.device="ccmni"
+		set network.wan6.device="ccmni"
+		set network.wan.apn="$apn"
+		set network.wan.auth="$auth_type"
+		set network.wan.username="$user"
+		set network.wan.password="$password"
+		set network.wan.iptype="$protocol"
+		set network.wan.iaapn="$iaapn"
+		set network.wan.iaiptype="$iaprotocol"
+		set network.wan.iaroamingtype="$iaroaming_protocol"
+		set network.wan.roamingtype="$roaming_protocol"
+		set network.wan.rattype="$rattype"
+		set network.wan.plmn="$plmn"
+		set network.wan.mtu="$mtu"
+		set network.wan.dataroaming="$dataroaming"
+		commit network
+	EOF
+	ifup wan
+	logger -t apn "APN provision done"
+
+	# Test SIM is MCC: 1 MNC:01
+	if [[ "$plmn" == "1001" ]] ; then
+		logger -t apn "Run test SIM configuration"
+
+		uci set system.ntp.enabled='0'
+		uci set dhcp.@dnsmasq[0].rebind_protection='0'
+		uci set firewall.@zone[1].input='ACCEPT'
+		uci set firewall.@zone[1].forward='ACCEPT'
+		uci set network.wan.retry='1000'
+		uci commit
+		reload_config
+	fi
+}
+
+boot() {
+	echo "start mtk apn provision service"
+
+	# Meta mode handling
+	bootmode=$(hexdump -v /proc/device-tree/chosen/atag,boot | awk '{print $6}')
+	if [ ${bootmode} = "0001" ] ;
+	then
+		exit 1
+	fi
+
+	CFG="/etc/config/network"
+	[ -s "${CFG}" ] || exit 1
+
+	# Skip to run when the proto is mipc
+	proto="$(uci -q get network.wan.proto)"
+	[ $proto = "mipc" ] && exit 1
+
+	plmn="$(uci -q get network.wan.plmn)"
+	auto_conf="$(uci -q get network.wan.auto_conf)"
+	[ -z "$plmn" ] && plmn=""
+	[ -z "$auto_conf" ] && auto_conf="1"
+
+	if [ "$auto_conf" = "1" ] ; then
+		echo "Initalize APN parameters"
+		check_sim "${plmn}" &
+		exit 1
+	else
+		echo "No auto SIM conf."
+	fi
+}
