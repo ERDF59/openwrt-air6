@@ -1,0 +1,12 @@
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+*.img binary
+*.bin binary
+*.ko binary
+*.apk binary
+
+# Unified diff context intentionally contains leading spaces and blank lines.
+*.patch -whitespace
