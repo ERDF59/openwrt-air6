@@ -1,0 +1,18 @@
+#!/bin/sh
+[ -x /usr/sbin/uhttpd ] || exit 0
+
+cur="$(uci -q get uhttpd.main.index_page)"
+case " $cur " in
+	*" cpe.html "*) ;;
+	*) uci set uhttpd.main.index_page='cpe.html' ;;
+esac
+uci commit uhttpd
+
+/etc/init.d/rpcd restart >/dev/null 2>&1
+/etc/init.d/uhttpd reload >/dev/null 2>&1
+[ -x /usr/sbin/air6-ca-daemon ] && {
+	/etc/init.d/air6-ca-daemon enable >/dev/null 2>&1
+	/etc/init.d/air6-ca-daemon start >/dev/null 2>&1
+}
+
+exit 0

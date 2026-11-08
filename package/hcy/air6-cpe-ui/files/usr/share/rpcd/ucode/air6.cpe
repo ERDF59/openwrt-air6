@@ -1,0 +1,419 @@
+#!/usr/bin/env ucode
+/* Air6 CPE UI backend: WiFi read/write on top of UCI + the vendor mtwifi layer.
+ * UCI stays the source of truth so LuCI and CLI keep working.
+ */
+'use strict';
+
+import { popen, readfile, writefile as __writefile, open as __open, stat as __stat } from 'fs';
+
+const BANDS = [ '2g', '5g', '6g' ];
+const MAX_CHANNEL = { '2g': 14, '5g': 196, '6g': 233 };
+const MAX_HT = { '2g': 40, '5g': 160, '6g': 320 };
+
+function capture(argv, seconds) {
+	let command = join(' ', map(argv, v => {
+		v = '' + v;
+		return `'${replace(v, "'", "'\\''")}'`;
+	}));
+	if (readfile('/usr/bin/timeout') != null)
+		command = `/usr/bin/timeout ${seconds || 10} ${command}`;
+	let pipe = popen(`${command} 2>&1`, 'r');
+	let output = pipe?.read?.('all') || '';
+	let code = pipe?.close?.();
+return { output: trim(output), code: code || 0 };
+}
+
+function unquote(v) {
+	if (length(v) >= 2 && substr(v, 0, 1) == "'" && substr(v, -1) == "'")
+		return replace(substr(v, 1, length(v) - 2), "'\\''", "'");
+	return v;
+}
+
+function uci_show(config) {
+	let res = capture([ '/sbin/uci', '-q', 'show', config ], 5);
+	let secs = {};
+	for (let line in split(res.output, '\n')) {
+		if (!length(line))
+			continue;
+		let eq = index(line, '=');
+		if (eq < 0)
+			continue;
+		let left = substr(line, 0, eq);
+		let right = unquote(substr(line, eq + 1));
+		let parts = split(left, '.');
+		if (length(parts) == 2) {
+			secs[parts[1]] = secs[parts[1]] || {};
+			secs[parts[1]].__type = right;
+			continue;
+		}
+		if (length(parts) < 3)
+			continue;
+		let name = parts[1];
+		let opt = substr(left, length(config) + 1 + length(name) + 1);
+		secs[name] = secs[name] || {};
+		secs[name][opt] = right;
+	}
+	return secs;
+}
+
+function uci_set(path, val) {
+	return capture([ '/sbin/uci', 'set', path + '=' + val ], 5);
+}
+
+function mt_band(dev) {
+	let arg = '{"device":"' + dev + '"}';
+	let r = capture([ '/bin/ubus', 'call', 'mtwifi', 'band', arg ], 5);
+	try {
+		let j = json(r.output);
+		if (j && j.bands && j.bands[0])
+			return j.bands[0];
+	} catch (e) {}
+	return null;
+}
+
+function get_wifi() {
+	let secs = uci_show('wireless');
+	let radios = [];
+	for (let name, sec in secs) {
+		if (sec.__type != 'wifi-device')
+			continue;
+		let ifaces = [];
+		for (let iname, isec in secs) {
+			if (isec.__type != 'wifi-iface' || isec.device != name || isec.mode != 'ap')
+				continue;
+			push(ifaces, {
+				section: iname,
+				ssid: isec.ssid || '',
+				key: isec.key || '',
+				encryption: isec.encryption || 'sae-mixed',
+				disabled: isec.disabled == '1' ? 1 : 0,
+				network: isec.network || 'lan',
+				mode: isec.mode || 'ap'
+			});
+		}
+		let mt = mt_band(name);
+		push(radios, {
+			section: name,
+			band: sec.band || (mt ? mt.band : ''),
+			channel: +(sec.channel || 0),
+			htmode: sec.htmode || (mt ? mt.htmode : ''),
+			disabled: sec.disabled == '1' ? 1 : 0,
+			country: sec.country || '',
+			ifname: mt ? mt.main_iface : (sec.main_ifname || ''),
+			mt: mt,
+			ifaces: ifaces
+		});
+	}
+	let ordered = [];
+	for (let b in BANDS)
+		for (let r in radios)
+			if (r.band == b)
+				push(ordered, r);
+	for (let r in radios)
+		if (index(BANDS, r.band) < 0)
+			push(ordered, r);
+	return { radios: ordered };
+}
+
+function valid_ssid(s) {
+	return type(s) == 'string' && length(s) >= 1 && length(s) <= 32;
+}
+
+function valid_key(s) {
+	if (type(s) != 'string')
+		return false;
+	if (length(s) == 64 && match(s, /^[0-9a-fA-F]+$/))
+		return true;
+	return length(s) >= 8 && length(s) <= 63 && match(s, /^[ -~]+$/);
+}
+
+function valid_htmode(band, htmode) {
+	let m = match(htmode, /^(HT|VHT|HE|EHT)(20|40|80|160|320)$/);
+	if (!m)
+		return false;
+	return +m[2] <= (MAX_HT[band] || 320);
+}
+
+function restore(radio, iface, old) {
+	uci_set('wireless.' + radio + '.channel', old.channel);
+	uci_set('wireless.' + radio + '.htmode', old.htmode);
+	uci_set('wireless.' + radio + '.disabled', old.disabled);
+	uci_set('wireless.' + iface + '.ssid', old.ssid);
+	uci_set('wireless.' + iface + '.key', old.key);
+	uci_set('wireless.' + iface + '.encryption', old.encryption);
+	uci_set('wireless.' + iface + '.disabled', old.idisabled);
+	if (old.pmf == null)
+		capture([ '/sbin/uci', '-q', 'delete', 'wireless.' + iface + '.ieee80211w' ], 5);
+	else
+		uci_set('wireless.' + iface + '.ieee80211w', old.pmf);
+	capture([ '/sbin/uci', 'commit', 'wireless' ], 10);
+}
+
+function apply_wireless() {
+	let config = capture([ '/bin/ubus', 'call', 'mtwifi', 'config', '{}' ], 20);
+	if (config.code != 0)
+		return config;
+	return capture([ '/bin/ubus', 'call', 'network', 'reload' ], 30);
+}
+
+function set_wifi(req) {
+	let args = req.args || {};
+	let radio = '' + (args.radio || '');
+	let iface = '' + (args.iface || '');
+	if (!length(radio) || !length(iface))
+		return { error: '缺少 radio/iface' };
+
+	let secs = uci_show('wireless');
+	let rsec = secs[radio];
+	let isec = secs[iface];
+	if (!rsec || rsec.__type != 'wifi-device')
+		return { error: '未知的无线频段' };
+	if (!isec || isec.__type != 'wifi-iface' || isec.device != radio || isec.mode != 'ap')
+		return { error: '未知的无线接口' };
+
+	let band = rsec.band || '';
+	let mt = mt_band(radio);
+	if (!mt || +mt.max_bw_mhz <= 0 || (band == '6g' && !mt.support_6g))
+		return { error: '该设备没有可用的此频段射频' };
+	if (index(BANDS, band) < 0)
+		return { error: '未知的无线频段' };
+	let ssid = '' + (args.ssid || '');
+	let key = '' + (args.key || '');
+	let encryption = '' + (args.encryption || isec.encryption || 'sae-mixed');
+	let channel = +args.channel;
+	let htmode = '' + (args.htmode || '');
+	let disabled = args.disabled == '1' ? '1' : '0';
+
+	if (index([ 'none', 'owe', 'psk2', 'sae', 'sae-mixed' ], encryption) < 0)
+		return { error: '不支持的加密方式' };
+	if (band == '6g' && index([ 'sae', 'owe' ], encryption) < 0)
+		return { error: '6 GHz 需要 WPA3 或 OWE' };
+	if (!valid_ssid(ssid))
+		return { error: 'SSID 长度需为 1-32 字节' };
+	if (encryption != 'none' && encryption != 'owe' && !valid_key(key))
+		return { error: '密码需为 8-63 位 ASCII 或 64 位十六进制' };
+	if (channel != int(channel) || !(channel >= 0 && channel <= MAX_CHANNEL[band]))
+		return { error: '信道超出该频段范围' };
+	let mode = match(htmode, /^(HT|VHT|HE|EHT)(20|40|80|160|320)$/);
+	let feature = mode ? { HT: 'ht', VHT: 'vht', HE: 'he', EHT: 'eht' }[mode[1]] : null;
+	if (!valid_htmode(band, htmode) || !feature || !mt[feature] || +mode[2] > +mt.max_bw_mhz)
+		return { error: '带宽与该频段不匹配' };
+
+	let old = {
+		channel: rsec.channel || '',
+		htmode: rsec.htmode || '',
+		disabled: rsec.disabled || '',
+		ssid: isec.ssid || '',
+		key: isec.key || '',
+		encryption: isec.encryption || '',
+		pmf: isec.ieee80211w,
+		idisabled: isec.disabled || ''
+	};
+
+	let writes = [
+		uci_set('wireless.' + radio + '.channel', channel),
+		uci_set('wireless.' + radio + '.htmode', htmode),
+		uci_set('wireless.' + radio + '.disabled', disabled),
+		uci_set('wireless.' + iface + '.ssid', ssid),
+		uci_set('wireless.' + iface + '.key', key),
+		uci_set('wireless.' + iface + '.encryption', encryption),
+		uci_set('wireless.' + iface + '.ieee80211w',
+			(encryption == 'sae' || encryption == 'owe') ? '2' : encryption == 'sae-mixed' ? '1' : '0'),
+		uci_set('wireless.' + iface + '.disabled', args.iface_disabled == '1' ? '1' : '0')
+	];
+	for (let write in writes) {
+		if (write.code != 0) {
+			restore(radio, iface, old);
+			return { error: '无线设置写入失败，已恢复原配置' };
+		}
+	}
+
+	let commit = capture([ '/sbin/uci', 'commit', 'wireless' ], 10);
+	if (commit.code != 0) {
+		restore(radio, iface, old);
+		return { error: '配置提交失败' };
+	}
+
+	let reload = apply_wireless();
+	if (reload.code != 0) {
+		restore(radio, iface, old);
+		apply_wireless();
+		return { error: '应用失败，已回滚' };
+	}
+	return { ok: true };
+}
+
+
+function ping_host(req) {
+	let host = '' + (req.args?.host || '');
+	if (!match(host, /^[A-Za-z0-9._:-]{1,64}$/))
+		return { error: '主机名或 IP 不合法' };
+	let r = capture([ '/bin/ping', '-c', '4', '-W', '2', host ], 20);
+	return { ok: r.code == 0, output: r.output };
+}
+
+function get_ca() {
+	let raw = readfile('/tmp/air6-ca.json');
+	if (raw == null)
+		return { ok: false, error: 'CA 数据尚未就绪' };
+	let data;
+	try { data = json(raw); } catch (e) { return { ok: false, error: '载波缓存格式错误' }; }
+	let age = time() - +(data.ts || 0);
+	return { ok: true, raw: trim(raw), age: age, stale: !data.ts || age < -30 || age > 60 };
+}
+
+function diagnose(req) {
+    let tool = '' + (req.args?.tool || '');
+    let host = '' + (req.args?.host || '');
+    if (!match(host, /^[A-Za-z0-9:][A-Za-z0-9._:-]{0,252}$/))
+        return { error: '主机名或 IP 不合法', code: 22 };
+    let commands = {
+        ping4: [ '/bin/ping', '-c', '4', '-W', '2', host ],
+        ping6: [ '/bin/ping6', '-c', '4', '-W', '2', host ],
+        dns: [ '/usr/bin/nslookup', host ],
+        trace: [ '/bin/traceroute', '-n', '-m', '12', '-q', '1', '-w', '1', host ]
+    };
+    if (!commands[tool]) return { error: '未知诊断方式', code: 22 };
+    let result = capture(commands[tool], 18);
+    return { ok: result.code == 0, code: result.code, output: result.output };
+}
+
+function get_logs(req) {
+    let source = '' + (req.args?.source || 'system');
+    if (source != 'system' && source != 'kernel')
+        return { error: '未知日志来源', code: 22 };
+    let result = capture(source == 'kernel' ? [ '/bin/dmesg' ] : [ '/sbin/logread' ], 5);
+    let lines = split(result.output, '\n');
+    let start = length(lines) > 250 ? length(lines) - 250 : 0;
+    let output = join('\n', slice(lines, start));
+    return { code: result.code, output: substr(output, -32768) };
+}
+
+function get_neighbors() {
+    let result = capture([ '/sbin/ip', '-4', 'neigh', 'show', 'dev', 'br-lan' ], 5);
+    return { code: result.code, output: result.output };
+}
+
+
+const LTE_LOCK_BANDS = [1,3,5,7,8,20,28,38,40,41,42,43];
+const NR_LOCK_BANDS = [1,3,5,7,8,20,28,38,40,41,77,78,79];
+function band_lock_get() {
+    let r = capture(['/usr/bin/air6-modem-chain-lock', 'get'], 25);
+    let lte = match(r.output, /lte band info\s*=\s*([0-9a-fA-F]+)/);
+    let nr = match(r.output, /nr band info\s*=\s*([0-9a-fA-F]+)/);
+    return { code:r.code, lte_mask:lte ? lte[1] : '', nr_mask:nr ? nr[1] : '', saved:substr(readfile('/etc/modem5g-lock.state') || '',0,400), error:!lte || !nr ? '频段读取失败，请重试' : null };
+}
+function valid_band_list(value, allowed) {
+    if (!match(value, /^[0-9]+(,[0-9]+)*$/)) return false;
+    let values=split(value, ',');
+    if (!length(values) || length(values)>16) return false;
+    for (let b in values) if (index(allowed, +b)<0) return false;
+    return true;
+}
+function band_lock_start(req) {
+    let action=req.args?.action || '';
+    let lte=req.args?.lte || '', nr=req.args?.nr || '';
+    if (action!='apply' && action!='reset') return {error:'未知频段操作',code:22};
+    if (action=='apply' && (!valid_band_list(lte,LTE_LOCK_BANDS) || !valid_band_list(nr,NR_LOCK_BANDS))) return {error:'LTE 和 NR 均需选择至少一个有效频段',code:22};
+    if (action=='reset') { lte=''; nr=''; }
+    /* The native wrapper serializes control and verifies actual modem masks. */
+    let busy=capture(['/bin/sh','-c','test -d /tmp/air6-ui-band.lock'],2);
+    if (busy.code==0) return {error:'频段操作正在执行，请等待完成',code:75};
+    let auth=capture(['/usr/bin/air6-modem-at','AT+AIR6BAND?'],10);
+    if (index(auth.output,'LICENSE=VALID')<0 || index(auth.output,'TARGET=EU25')<0) return {error:'请先完成本机 EU25 授权，再设置扩展频段',code:22};
+    capture(['/bin/rm','-f','/tmp/air6-ui-band.exit','/tmp/air6-ui-band.output'],2);
+    let command='/usr/sbin/air6-ui-band-job '+action+' '+lte+' '+nr+' >/tmp/air6-ui-band.launch 2>&1 </dev/null &';
+    capture(['/bin/sh','-c',command],2);
+    return {ok:true};
+}
+function band_lock_status() {
+    let busy=capture(['/bin/sh','-c','test -d /tmp/air6-ui-band.lock'],2).code==0;
+    let exit=readfile('/tmp/air6-ui-band.exit');
+    return {running:busy,done:!busy && exit!=null,code:exit!=null ? +trim(exit) : null,output:substr(readfile('/tmp/air6-ui-band.output') || '',-6000)};
+}
+
+function update_meta(id) {
+    let meta=json(readfile('/tmp/air6-update/upload.json')||'null');
+    if(!meta || meta.id!=id || !match(id||'',/^[a-f0-9-]{36}$/))die('更新上传会话已过期');
+    return meta;
+}
+function update_running() {let s=json(readfile('/tmp/air6-update/status.json')||'{}');return !!s.running;}
+function update_begin(req) {
+    let a=req.args||{};
+    if(index(['firmware','modem'],a.kind)<0 || +a.size!=int(+a.size) || +a.size<10240 || +a.size>402653184)return {error:'更新包类型或大小无效'};
+    if(update_running() || readfile('/tmp/air6-flash.lock')!=null || __stat('/tmp/air6-flash.lock'))return {error:'已有更新任务正在运行'};
+    let free=capture(['/bin/sh','-c',"df -Pk /tmp | tail -1 | awk '{print $4}'"],3);
+    if(+free.output*1024 < +a.size*2+33554432)return {error:'临时空间不足，请选择较小的完整更新包'};
+    let r=capture(['/bin/sh','-c','umask 077; test ! -L /tmp/air6-update && mkdir -p /tmp/air6-update && chmod 700 /tmp/air6-update && rm -f /tmp/air6-update/*'],3);if(r.code)return {error:'初始化更新空间失败'};
+    let id=trim(readfile('/proc/sys/kernel/random/uuid')||'');
+    __writefile('/tmp/air6-update/upload.json',sprintf('%J',{id,kind:a.kind,size:+a.size}));
+    __writefile('/tmp/air6-update/upload.tar','');
+    return {ok:true,id,chunk_size:32768,upload_transport:'cgi'};
+}
+function update_chunk(req) {
+    try {
+        let a=req.args||{},meta=update_meta(a.id);
+        if(update_running())die('校验/刷写期间禁止覆盖上传');
+        let path='/tmp/air6-update/upload.tar',offset=__stat(path)?.size||0;
+        if(+a.offset!=offset || type(a.data)!='string' || length(a.data)>43692 || !match(a.data,/^[A-Za-z0-9+\/=]+$/))die('上传分块无效或顺序错误');
+        let bytes=b64dec(a.data);if(bytes==null || length(bytes)>32768 || offset+length(bytes)>meta.size)die('上传分块超出声明大小');
+        let f=__open(path,'a');if(!f)die('打开上传文件失败');let n=f.write(bytes);f.close();if(n!=length(bytes))die('上传写入不完整');
+        return {ok:true,offset:offset+n};
+    }catch(e){return {error:''+(e.message || e)};}
+}
+function update_launch(req,mode) {
+    try {
+        let a=req.args||{},meta=update_meta(a.id);if(update_running())die('已有更新任务正在运行');
+        if(__stat('/tmp/air6-update/upload.tar')?.size!=meta.size)die('文件尚未完整上传');
+        if(mode=='flash') {
+            let status=json(readfile('/tmp/air6-update/status.json')||'{}');
+            if(!status.verified || status.verified.digest!=a.digest || !match(a.digest||'',/^[a-f0-9]{64}$/))die('请先完成签名校验');
+            if(!match(a.target_slot||'',/^[ab]$/))die('请选择目标槽位');
+            if(index(status.verified.allowed_slots||[status.verified.slot],a.target_slot)<0)die('该包不支持所选槽位');
+            meta.target_slot=a.target_slot;meta.confirmed_digest=a.digest;__writefile('/tmp/air6-update/upload.json',sprintf('%J',meta));
+        }
+        __writefile('/tmp/air6-update/status.json',sprintf('%J',{running:true,output:'任务已提交…'}));
+        capture(['/bin/sh','-c','/usr/bin/ucode /usr/share/air6-cpe/update.uc '+mode+' '+a.id+' >/tmp/air6-update/worker.log 2>&1 </dev/null &'],2);
+        return {ok:true};
+    }catch(e){return {error:''+(e.message || e)};}
+}
+function get_home() {
+    try {return {config:json(readfile('/etc/air6-cpe/home.json')||'{}')};}catch(e){return {config:{}};}
+}
+function set_home(req) {
+    try {
+        let raw=req.args?.config;if(type(raw)!='string' || length(raw)>65536)die('首页配置过大');let c=json(raw);
+        if(type(c.name)!='string' || !length(trim(c.name)) || length(c.name)>96 || type(c.modules)!='array' || length(c.modules)>80 || type(c.layout)!='array' || length(c.layout)>80)die('首页配置格式无效');
+        for(let id in c.modules)if(type(id)!='string' || length(filter(c.modules,m=>m==id))!=1 || !match(id,/^[a-z]+:[a-zA-Z0-9_.-]{1,100}$/))die('模块标识无效');
+        for(let i in c.layout)if(index(c.modules,i.id)<0 || +i.x!=int(+i.x) || +i.y!=int(+i.y) || +i.w!=int(+i.w) || +i.h!=int(+i.h) || +i.x<0 || +i.y<0 || +i.w<1 || +i.w>12 || +i.h<1 || +i.h>50 || +i.y>10000)die('模块布局无效');
+        capture(['/bin/mkdir','-p','/etc/air6-cpe'],2);
+        if(!__writefile('/etc/air6-cpe/home.json.new',sprintf('%J',{name:trim(c.name),modules:c.modules,layout:c.layout,manual:!!c.manual,landing:length(c.modules)>0 && !!c.landing})))die('保存首页失败');
+        if(capture(['/bin/mv','/etc/air6-cpe/home.json.new','/etc/air6-cpe/home.json'],2).code)die('保存首页失败');
+        return {ok:true};
+    }catch(e){return {error:''+(e.message || e)};}
+}
+
+return {
+	'air6.cpe': {
+        get_home: {call:function(){return get_home();}},
+        set_home: {args:{config:''},call:function(req){return set_home(req);}},
+        update_begin: {args:{kind:'',size:0},call:function(req){return update_begin(req);}},
+        update_chunk: {args:{id:'',offset:0,data:''},call:function(req){return update_chunk(req);}},
+        update_verify: {args:{id:''},call:function(req){return update_launch(req,'verify');}},
+        update_flash: {args:{id:'',digest:'',target_slot:''},call:function(req){return update_launch(req,'flash');}},
+        update_status: {call:function(){try{let s=json(readfile('/tmp/air6-update/status.json')||'{}');let m=match(readfile('/proc/cmdline')||'',/(^|[ \t])bootslot=([ab])([ \t]|$)/);s.current_slot=m?m[2]:null;return s;}catch(e){return {error:'状态不可读'};}}},
+
+        get_band_lock: {call:function(){return band_lock_get();}},
+        set_band_lock: {args:{action:'',lte:'',nr:''},call:function(req){return band_lock_start(req);}},
+        get_band_job: {call:function(){return band_lock_status();}},
+        get_leases: { call: function() { return { data: readfile('/tmp/dhcp.leases') || '' }; } },
+        diagnose: { args: { tool: '', host: '' }, call: function(req) { return diagnose(req); } },
+        get_logs: { args: { source: 'system' }, call: function(req) { return get_logs(req); } },
+        get_neighbors: { call: function() { return get_neighbors(); } },
+		get_wifi: { call: function() { return get_wifi(); } },
+		set_wifi: { args: { radio: '', iface: '', ssid: '', key: '', encryption: '', channel: 0, htmode: '', disabled: 0, iface_disabled: 0 },
+			call: function(req) { return set_wifi(req); } },
+		get_ca: { call: function() { return get_ca(); } },
+		ping: { args: { host: '' }, call: function(req) { return ping_host(req); } }
+	}
+};

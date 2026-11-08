@@ -1,0 +1,88 @@
+{
+  "air6-cpe": {
+    "description": "Air6 CPE web interface",
+    "read": {
+      "ubus": {
+        "air6.cpe": [
+          "get_wifi",
+          "get_ca",
+          "get_logs",
+          "get_neighbors",
+          "get_leases",
+          "get_band_lock",
+          "get_band_job",
+          "get_home",
+          "update_status"
+        ],
+        "luci.air6modem": [
+          "get_status",
+          "get_cells",
+          "get_network",
+          "get_accel_stats"
+        ],
+        "iwinfo": [
+          "devices",
+          "info",
+          "assoclist"
+        ],
+        "system": [
+          "board",
+          "info"
+        ],
+        "file": [
+          "read"
+        ],
+        "uci": [
+          "get"
+        ],
+        "luci": [
+          "getInitList",
+          "getVersion",
+          "getLEDs"
+        ]
+      }
+    },
+    "write": {
+      "ubus": {
+        "air6.cpe": [
+          "set_wifi",
+          "ping",
+          "diagnose",
+          "set_band_lock",
+          "set_home",
+          "update_begin",
+          "update_chunk",
+          "update_verify",
+          "update_flash"
+        ],
+        "luci.air6modem": [
+          "run_at",
+          "set_rat",
+          "ifup",
+          "ifdown",
+          "set_radio",
+          "delete_sms"
+        ],
+        "system": [
+          "reboot"
+        ],
+        "uci": [
+          "set",
+          "commit"
+        ],
+        "luci": [
+          "setInitAction",
+          "setPassword"
+        ]
+      },
+      "cgi-io": [
+        "upload"
+      ],
+      "file": {
+        "/tmp/air6-update/upload.tar": [
+          "write"
+        ]
+      }
+    }
+  }
+}

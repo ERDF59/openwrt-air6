@@ -1,0 +1,13 @@
+#!/bin/sh
+set -u
+job=/tmp/air6-ui-band
+mkdir "$job.lock" 2>/dev/null || exit 75
+trap 'rmdir "$job.lock" 2>/dev/null' EXIT
+rm -f "$job.exit"
+printf '正在应用并验证频段…\n' > "$job.output"
+case "$1" in
+ apply) /usr/bin/air6-modem-chain-lock apply-bands "$2" "$3" >> "$job.output" 2>&1; rc=$? ;;
+ reset) /usr/bin/air6-modem-chain-lock reset-bands >> "$job.output" 2>&1; rc=$? ;;
+ *) rc=22 ;;
+esac
+printf '%s\n' "$rc" > "$job.exit"
