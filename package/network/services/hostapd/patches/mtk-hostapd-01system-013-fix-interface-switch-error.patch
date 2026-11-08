@@ -1,0 +1,16 @@
+diff -uprN a/src/ap/hostapd.c b/src/ap/hostapd.c
+--- a/src/ap/hostapd.c	2025-03-25 16:03:18.163325479 +0800
++++ b/src/ap/hostapd.c	2025-03-25 15:59:17.165975489 +0800
+@@ -3397,8 +3397,10 @@ int hostapd_remove_iface(struct hapd_int
+ 		if (hapd_iface == NULL)
+ 			return -1;
+ 		if (!os_strcmp(hapd_iface->conf->bss[0]->iface, buf)) {
+-			wpa_printf(MSG_INFO, "Remove interface '%s',interfaces all count '%zu' ", buf, interfaces->count);
+-			if (hapd_iface->conf->num_bss == 1) {
++			wpa_printf(MSG_INFO, "Remove interface '%s',interfaces all count '%zu', state=%d",
++				buf, interfaces->count, hapd_iface->state);
++			/* not enabled interface can not switch */
++			if (hapd_iface->conf->num_bss == 1 || hapd_iface->state != HAPD_IFACE_ENABLED) {
+ 				wpa_printf(MSG_INFO, "Remove interface '%s'",
+ 					   buf);
+ 				hapd_iface->driver_ap_teardown =

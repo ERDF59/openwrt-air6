@@ -1,0 +1,265 @@
+diff -ruN a/src/drivers/mediatek_driver_cmd_nl80211.c b/src/drivers/mediatek_driver_cmd_nl80211.c
+--- a/src/drivers/mediatek_driver_cmd_nl80211.c	2025-03-14 11:46:59.340216988 +0800
++++ b/src/drivers/mediatek_driver_cmd_nl80211.c	2025-04-09 14:57:28.321644000 +0800
+@@ -444,45 +444,229 @@
+ 	wpa_hexdump(MSG_MSGDUMP, "Sta Link Mac", data, data_len);
+ }
+ 
++static int calculate_chan_offset(int width, int freq, int cf1, int cf2)
++{
++	int freq1 = 0;
++
++	switch (convert2width(width)) {
++	case CHAN_WIDTH_20_NOHT:
++	case CHAN_WIDTH_20:
++		return 0;
++	case CHAN_WIDTH_40:
++		freq1 = cf1 - 10;
++		break;
++	case CHAN_WIDTH_80:
++		freq1 = cf1 - 30;
++		break;
++	case CHAN_WIDTH_160:
++		freq1 = cf1 - 70;
++		break;
++	case CHAN_WIDTH_80P80:
++		freq1 = cf1 - 30;
++		break;
++	case CHAN_WIDTH_320:
++		freq1 = cf1 - 150;
++		break;
++	case CHAN_WIDTH_UNKNOWN:
++	case CHAN_WIDTH_2160:
++	case CHAN_WIDTH_4320:
++	case CHAN_WIDTH_6480:
++	case CHAN_WIDTH_8640:
++		/* FIXME: implement this */
++		return 0;
++	}
++
++	return (abs(freq - freq1) / 20) % 2 == 0 ? 1 : -1;
++}
++
++static void mtk_nl80211_rx_ch_switch_event(
++				struct wpa_driver_nl80211_data *drv,
++				u32 subcmd,
++				u8 *data, size_t data_len)
++{
++	struct nlattr *tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_MAX + 1];
++	struct i802_bss *bss;
++	union wpa_event_data wpa_data;
++	int ifidx;
++	int ret;
++
++	ret = nla_parse(tb, MTK_NL80211_VENDOR_ATTR_CH_SWITCH_MAX, (struct nlattr *) data, data_len, NULL);
++	if (ret)
++		return;
++
++	ifidx = nla_get_u32(tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_IF_INDEX]);
++	bss = get_bss_ifindex(drv, ifidx);
++	if (bss == NULL) {
++		wpa_printf(MSG_WARNING, "nl80211: Unknown ifindex (%d) for channel switch, ignoring",
++			   ifidx);
++		return;
++	}
++
++	if (!tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_FREQ])
++		return;
++
++	os_memset(&wpa_data, 0, sizeof(wpa_data));
++	wpa_data.ch_switch.freq = nla_get_u32(tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_FREQ]);
++
++	/* Get VHT params */
++	if (tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_WIDTH])
++		wpa_data.ch_switch.ch_width = convert2width(
++			nla_get_u32(tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_WIDTH]));
++	if (tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_CENTER_FREQ1])
++		wpa_data.ch_switch.cf1 = nla_get_u32(
++			tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_CENTER_FREQ1]);
++	if (tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_CENTER_FREQ2])
++		wpa_data.ch_switch.cf2 = nla_get_u32(
++			tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_CENTER_FREQ2]);
++	if (tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_COUNT])
++		wpa_data.ch_switch.count = nla_get_u32(
++			tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_COUNT]);
++
++	/* Check HT params */
++	if (tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_TYPE]) {
++		wpa_data.ch_switch.ht_enabled = 1;
++		wpa_data.ch_switch.ch_offset = 0;
++
++		switch (nla_get_u32(tb[MTK_NL80211_VENDOR_ATTR_CH_SWITCH_CHANNEL_TYPE])) {
++		case NL80211_CHAN_NO_HT:
++			wpa_data.ch_switch.ht_enabled = 0;
++			break;
++		case NL80211_CHAN_HT20:
++			break;
++		case NL80211_CHAN_HT40PLUS:
++			wpa_data.ch_switch.ch_offset = 1;
++			break;
++		case NL80211_CHAN_HT40MINUS:
++			wpa_data.ch_switch.ch_offset = -1;
++			break;
++		}
++	} else if (wpa_data.ch_switch.ch_width && wpa_data.ch_switch.cf1) {
++		/* This can happen for example with VHT80 ch switch */
++		wpa_data.ch_switch.ch_offset = calculate_chan_offset(
++							wpa_data.ch_switch.ch_width,
++						    wpa_data.ch_switch.freq,
++						    wpa_data.ch_switch.cf1,
++						    wpa_data.ch_switch.cf2);
++		wpa_printf(MSG_DEBUG, "nl80211: Calculated channel offset: %d",
++			   wpa_data.ch_switch.ch_offset);
++	} else {
++		wpa_printf(MSG_WARNING, "nl80211: Unknown secondary channel information - following channel definition calculations may fail");
++	}
++
++	wpa_printf(MSG_INFO, "nl80211: %s event on freq %d MHz, ht: %d, "
++		"offset: %d, width: %d, cf1: %dMHz, cf2: %dMHz cs_count=%d",
++		subcmd == MTK_NL80211_VENDOR_EVENT_CH_SWITCH_STARTED ?
++			"CH_SWITCH_STARTED" : "CH_SWITCH",
++		wpa_data.ch_switch.freq,
++		wpa_data.ch_switch.ht_enabled,
++		wpa_data.ch_switch.ch_offset,
++		wpa_data.ch_switch.ch_width,
++		wpa_data.ch_switch.cf1,
++		wpa_data.ch_switch.cf2,
++		wpa_data.ch_switch.count);
++
++	drv->assoc_freq = wpa_data.ch_switch.freq;
++	switch (subcmd) {
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH_STARTED:
++		wpa_supplicant_event(bss->ctx, EVENT_CH_SWITCH_STARTED, &wpa_data);
++		break;
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH:
++		bss->freq = wpa_data.ch_switch.freq;
++		wpa_supplicant_event(bss->ctx, EVENT_CH_SWITCH, &wpa_data);
++		break;
++	default:
++		wpa_printf(MSG_DEBUG, "nl80211: Unknown vendor event %d received", subcmd);
++		break;
++	}
++}
++
++static const char *mtk_nl80211_vendor_event_txt(enum mtk_nl80211_vendor_events event)
++{
++	switch (event) {
++	case MTK_NL80211_VENDOR_EVENT_UNSPEC:
++		return "MTK_NL80211_VENDOR_EVENT_UNSPEC";
++	case MTK_NL80211_VENDOR_EVENT_TEST:
++		return "MTK_NL80211_VENDOR_EVENT_TEST";
++	case MTK_NL80211_VENDOR_EVENT_RSP_WAPP_EVENT:
++		return "MTK_NL80211_VENDOR_EVENT_RSP_WAPP_EVENT";
++	case MTK_NL80211_VENDOR_EVENT_OFFCHANNEL_INFO:
++		return "MTK_NL80211_VENDOR_EVENT_OFFCHANNEL_INFO";
++	case MTK_NL80211_VENDOR_EVENT_SEND_ML_INFO:
++		return "MTK_NL80211_VENDOR_EVENT_SEND_ML_INFO";
++	case MTK_NL80211_VENDOR_EVENT_MLO_EVENT:
++		return "MTK_NL80211_VENDOR_EVENT_MLO_EVENT";
++	case MTK_NL80211_VENDOR_EVENT_STA_PROFILE_EVENT:
++		return "MTK_NL80211_VENDOR_EVENT_STA_PROFILE_EVENT";
++	case MTK_NL80211_VENDOR_EVENT_DISC_STA:
++		return "MTK_NL80211_VENDOR_EVENT_DISC_STA";
++	case MTK_NL80211_VENDOR_EVENT_COSR:
++		return "MTK_NL80211_VENDOR_EVENT_COSR";
++	case MTK_NL80211_VENDOR_EVENT_BH_STATUS:
++		return "MTK_NL80211_VENDOR_EVENT_BH_STATUS";
++	case MTK_NL80211_VENDOR_EVENT_ACS_COMPLETE_EVENT:
++		return "MTK_NL80211_VENDOR_EVENT_ACS_COMPLETE_EVENT";
++	case MTK_NL80211_VENDOR_EVENT_RX_T2LM_STOP_DISASSOC_TIMER:
++		return "MTK_NL80211_VENDOR_EVENT_RX_T2LM_STOP_DISASSOC_TIMER";
++	case MTK_NL80211_VENDOR_EVENT_ACS_PER_CH_INFO:
++		return "MTK_NL80211_VENDOR_EVENT_ACS_PER_CH_INFO";
++	case MTK_NL80211_VENDOR_EVENT_SEND_MLO_STA_LINK_MAC:
++		return "MTK_NL80211_VENDOR_EVENT_SEND_MLO_STA_LINK_MAC";
++	case MTK_NL80211_VENDOR_EVENT_MLO_RECONF:
++		return "MTK_NL80211_VENDOR_EVENT_MLO_RECONF";
++	case MTK_NL80211_VENDOR_EVENT_ANDLINK:
++		return "MTK_NL80211_VENDOR_EVENT_ANDLINK";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_DETECTED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_DETECTED";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_CAC_FINISHED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_CAC_FINISHED";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_CAC_ABORTED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_CAC_ABORTED";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_NOP_FINISHED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_NOP_FINISHED";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_PRE_CAC_EXPIRED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_PRE_CAC_EXPIRED";
++	case MTK_NL80211_VENDOR_EVENT_RADAR_CAC_STARTED:
++		return "MTK_NL80211_VENDOR_EVENT_RADAR_CAC_STARTED";
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH_STARTED:
++		return "MTK_NL80211_VENDOR_EVENT_CH_SWITCH_STARTED";
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH:
++		return "MTK_NL80211_VENDOR_EVENT_CH_SWITCH";
++	default:
++		return "MTK_NL80211_VENDOR_EVENT_UNKNOWN";
++	}
++}
++
+ void nl80211_vendor_event_mtk(struct wpa_driver_nl80211_data *drv, struct i802_bss *bss,
+                   u32 subcmd, u8 *data, size_t len)
+ {
+-    switch (subcmd) {
+-		case MTK_NL80211_VENDOR_EVENT_SEND_ML_INFO:
+-			mtk_ml80211_bss_ml_info_event(drv, bss, data, len);
+-			break;
+-	    case MTK_NL80211_VENDOR_EVENT_MLO_EVENT:
+-			wpa_printf(MSG_INFO,
+-	            "nl80211: MTK_NL80211_VENDOR_EVENT_MLO_EVENT event %u", subcmd);
+-	        mtk_nl80211_mlo_response_event(drv, data, len);
+-	        break;
+-		case MTK_NL80211_VENDOR_EVENT_STA_PROFILE_EVENT:
+-			wpa_printf(MSG_INFO,
+-	            "nl80211: MTK_NL80211_VENDOR_EVENT_STA_PROFILE_EVENT event %u", subcmd);
+-	        mtk_nl80211_mlo_sta_profile_event(drv, data, len);
+-	        break;
+-        case MTK_NL80211_VENDOR_EVENT_ACS_COMPLETE_EVENT:
+-			wpa_printf(MSG_INFO,
+-	            "nl80211: MTK_NL80211_VENDOR_EVENT_ACS_COMPLETE_EVENT event %u", subcmd);
+-            mtk_nl80211_acs_complete_event(drv, data, len);
+-            break;
++	wpa_printf(MSG_INFO, "nl80211: %s event %u", mtk_nl80211_vendor_event_txt(subcmd), subcmd);
++
++	switch (subcmd) {
++	case MTK_NL80211_VENDOR_EVENT_SEND_ML_INFO:
++		mtk_ml80211_bss_ml_info_event(drv, bss, data, len);
++		break;
++	case MTK_NL80211_VENDOR_EVENT_MLO_EVENT:
++		mtk_nl80211_mlo_response_event(drv, data, len);
++		break;
++	case MTK_NL80211_VENDOR_EVENT_STA_PROFILE_EVENT:
++		mtk_nl80211_mlo_sta_profile_event(drv, data, len);
++		break;
++	case MTK_NL80211_VENDOR_EVENT_ACS_COMPLETE_EVENT:
++		mtk_nl80211_acs_complete_event(drv, data, len);
++		break;
+ 	case MTK_NL80211_VENDOR_EVENT_RX_T2LM_STOP_DISASSOC_TIMER:
+-		wpa_printf(MSG_DEBUG,
+-		"nl80211: MTK_NL80211_VENDOR_EVENT_RX_T2LM_STOP_DISASSOC_TIMER event %u", subcmd);
+ 		mtk_nl80211_rxt2lm_stop_disassoc_timer_event(drv, data, len);
+ 		break;
+ 	case MTK_NL80211_VENDOR_EVENT_SEND_MLO_STA_LINK_MAC:
+-		wpa_printf(MSG_DEBUG,
+-		"nl80211: MTK_NL80211_VENDOR_EVENT_SEND_MLO_STA_LINK_MAC event %u", subcmd);
+ 		mtk_nl80211_rx_sta_link_mac_event(drv, data, len);
+ 		break;
+-	    default:
+-	        wpa_printf(MSG_DEBUG,
+-	            "nl80211:Ignore unsupported mtk vendor event %u, MTK_NL80211_VENDOR_EVENT_MLO_EVENT(%u)",
+-	            subcmd, MTK_NL80211_VENDOR_EVENT_MLO_EVENT);
+-	        break;
+-    }
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH_STARTED:
++	case MTK_NL80211_VENDOR_EVENT_CH_SWITCH:
++		mtk_nl80211_rx_ch_switch_event(drv, subcmd, data, len);
++		break;
++	default:
++		wpa_printf(MSG_DEBUG,
++			"nl80211: Ignore unsupported mtk vendor event %u", subcmd);
++		break;
++	}
+ }
+-
+-
+-
