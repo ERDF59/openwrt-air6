@@ -183,7 +183,7 @@ async function refreshCa() {
     const r = await ubus('air6.cpe', 'get_ca');
     if (r && r.ok && r.raw) {
       const j = JSON.parse(r.raw);
-      store.ca = (j && j.ok && !r.stale) ? j : null;
+      store.ca = (j && j.ok !== false && Array.isArray(j.cells) && !r.stale) ? j : null;
       store.caErr = store.ca ? '' : (r.stale ? '载波数据已过期，等待重新采集' : '载波采集失败');
     } else {
       store.ca = null;
@@ -786,7 +786,7 @@ const OverviewView = {
               <thead><tr><th>载波</th><th>方向</th><th>频段</th><th>ARFCN</th><th>PCI</th><th>带宽</th><th>状态</th></tr></thead>
               <tbody>
                 <tr v-for="(c,i) in caAll" :key="i">
-                  <td>{{ c.rat === 'nr' ? 'NR' : 'LTE' }} {{ c.idx === 0 ? 'PCC' : 'SCC' + c.idx }}</td>
+                  <td>{{ c.rat === 'nr' ? 'NR' : 'LTE' }} {{ c.role || (c.idx === 0 ? 'PCC' : 'SCC' + c.idx) }}</td>
                   <td>{{ c.dir === 'dl' ? '下行' : '上行' }}</td>
                   <td><span class="chip band-chip">{{ (c.rat === 'nr' ? 'n' : 'B') + c.band }}</span></td>
                   <td class="mono">{{ c.arfcn }}</td><td class="mono">{{ c.pci }}</td>

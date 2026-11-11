@@ -260,17 +260,19 @@ function get_ca() {
     if (!data.UPDATED || age < -5 || age > 30)
         return { ok: false, stale: true, age: age, error: '等待模组 API 数据' };
     let cells = [];
+    let secondary = { LTE: 0, NR: 0 };
     for (let c in (data.carriers || [])) {
+        let idx = c.role == 'PCC' ? 0 : ++secondary[c.rat];
         for (let dir in ['dl', 'ul']) {
             if (dir == 'ul' && c.role == 'SCC' && !c.ul_configured) continue;
             let bw = dir == 'dl' ? c.dl_bandwidth_mhz : c.ul_bandwidth_mhz;
-            push(cells, { rat: lc(c.rat), role: c.role, dir: dir,
+            push(cells, { rat: lc(c.rat), role: c.role, idx: idx, dir: dir,
                 band: c.band, pci: c.pci, arfcn: c.arfcn,
                 bw: bw != null ? `${bw} MHz` : '未知',
                 state: c.role == 'PCC' ? 2 : c.state });
         }
     }
-    let result = { ts: data.UPDATED, source: data.source, cells: cells,
+    let result = { ok: true, ts: data.UPDATED, source: data.source, cells: cells,
         ca: data.ca, endc: data.endc, measurements: data.measurements || [] };
     return { ok: true, raw: sprintf('%J', result), age: age, stale: false };
 }

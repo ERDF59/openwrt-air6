@@ -41,6 +41,9 @@ def main():
     assert ca.get('ok') and not ca.get('stale')
     compat = json.loads(ca['raw'])
     assert compat['source'] == 'qlril-ubus'
+    assert compat.get('ok') is True  # Legacy overview clients require this.
+    for carrier in compat['cells']:
+        assert carrier['idx'] == 0 if carrier['role'] == 'PCC' else carrier['idx'] >= 1
     bands = rpc('air6.cpe', 'get_band_lock')
     if cells['api_errors'].get('band_lock') == 0:
         assert bands.get('code') == 0 and len(bands['lte_mask']) == 64
