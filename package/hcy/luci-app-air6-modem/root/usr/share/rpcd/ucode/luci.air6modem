@@ -1,14 +1,6 @@
 #!/usr/bin/env ucode
-/* LuCI 5G modem backend for Air6 (MT6990 / RG620T).
- *
- * Adapted from FiberHome AIR6's luci-app-5gmodem (Apache-2.0) for the
- * QuecOpen firmware in this tree:
- *   - the cellular interface is plain `wan` (proto ql_datacall)
- *   - registration / RAT / signal are read with AT on atcid, because this
- *     vendor mipc_wan_cli has no show_register_status / nw_get_signal
- *   - band and cell locking needs the AIR6-only sample_nw helper, so those
- *     methods are not exported here
- */
+/* Read-only RIL snapshot for cellular status; explicit control/SMS methods
+ * retain their existing command paths. No status request performs modem I/O. */
 'use strict';
 
 import { popen, readfile } from 'fs';
@@ -16,7 +8,7 @@ import { popen, readfile } from 'fs';
 const CLI    = '/usr/bin/mipc_wan_cli';
 const ATCLI  = '/usr/bin/air6-modem-at';
 const SMSCLI = '/usr/bin/air6-modem-sms-send';
-const STATE  = '/tmp/air6-modem-status.state';
+const STATE  = '/tmp/air6-modem-status.json';
 const IFACE  = (function() {
 	let conf = readfile('/etc/config/network') || '';
 	return match(conf, /config interface 'modem5g'/) ? 'modem5g' : 'wan';
@@ -24,7 +16,7 @@ const IFACE  = (function() {
 
 /* 本固件没有 fiberhome 的 board_name；有厂商 mipc_wan_cli 才说明是这颗集成模组。 */
 function board_ok() {
-	return readfile(CLI) != null;
+	return readfile('/usr/bin/air6-nw-api') != null;
 }
 
 function quote(value) {
@@ -79,41 +71,18 @@ function network_state() {
 }
 
 function cached_modem_state() {
-	let data = readfile(STATE) || '';
-	let state = {};
-	for (let line in split(data, '\n')) {
-		let pos = index(line, '=');
-		if (pos > 0)
-			state[substr(line, 0, pos)] = substr(line, pos + 1);
-	}
-	return state;
+    try { return json(readfile(STATE) || '{}'); } catch (e) { return {}; }
 }
-
-/* 厂商 MIPC 客户端独占一个 CCCI 控制口。开机阶段不要打一堆查询进去。 */
-function modem_settled(network) {
-	if (!network?.up || +network.uptime < 20)
-		return false;
-	let daemons = [ 'atcid', 'ql_netd', 'ql_ril_service' ];
-	for (let i = 0; i < length(daemons); i++) {
-		if (capture([ '/bin/pidof', daemons[i] ], 2).code != 0)
-			return false;
-	}
-	return true;
-}
-
 
 function status() {
 	if (!board_ok())
-		return { available: false, error: 'mipc_wan_cli not found on this firmware' };
+		return { available: false, error: 'Native modem API helper not found on this firmware' };
 
 	let network_json = network_state();
-	if (!modem_settled(network_json))
-		return { available: true, initializing: true, network: network_json,
-			error: 'Modem is still completing the startup sequence' };
 
 	let cached = cached_modem_state();
 	let age = time() - +(cached.UPDATED || 0);
-	if (!cached.UPDATED || age > 180)
+	if (!cached.UPDATED || age < -5 || age > 30)
 		return { available: true, initializing: true, network: network_json,
 			error: 'Waiting for the modem status collector' };
 
@@ -121,6 +90,12 @@ function status() {
 		available: true,
 		cached: true,
 		cache_age: age,
+		source: cached.source,
+		ca: cached.ca,
+		endc: cached.endc,
+		carriers: cached.carriers || [],
+		measurements: cached.measurements || [],
+		api_errors: cached.api_errors,
 		imei: cached.IMEI || '',
 		imsi: cached.IMSI || '',
 		iccid: cached.ICCID || '',
@@ -190,16 +165,16 @@ const methods = {
 		return { hnat: hnat_stats(), interfaces: interface_stats(), ts: time() };
 	} },
 
-	/* AT+ECELL 是 MT6990 私有命令；不支持时返回原始错误，页面显示空表。 */
 	get_cells: { call: function() {
-		if (!modem_settled(network_state()))
-			return { initializing: true, serving: { output: 'Waiting for modem startup to settle' }, engineering: { output: '' } };
-		return {
-			serving: at('AT+ECELL'),
-			engineering: at('AT+EINFO?'),
-			note: 'Channel information comes from the read-only AT+ECELL response.'
-		};
-	} },
+        let cached = cached_modem_state();
+        let age = time() - +(cached.UPDATED || 0);
+        if (!cached.UPDATED || age < -5 || age > 30)
+            return { initializing: true, stale: true, cache_age: age, cells: [], carriers: [], measurements: [] };
+        return { source: cached.source, cache_age: age, stale: false,
+            cells: cached.cells || [], carriers: cached.carriers || [],
+            measurements: cached.measurements || [], ca: cached.ca,
+            endc: cached.endc, api_errors: cached.api_errors };
+    } },
 
 	list_sms: { call: function() {
 		let mode = at('AT+CMGF=1');

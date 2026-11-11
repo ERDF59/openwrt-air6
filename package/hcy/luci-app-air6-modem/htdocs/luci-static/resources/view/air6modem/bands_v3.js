@@ -41,40 +41,6 @@ function bandGroup(kind, full, factory, unlocked, cur, onChange) {
 	]);
 }
 
-function signed(value, limit) {
-	let n = parseInt(value, 10);
-	if (isNaN(n) || n > limit)
-		return null;
-	return -n;
-}
-
-function scaled(value, limit, factor) {
-	let n = parseInt(value, 10);
-	if (isNaN(n) || n > limit)
-		return null;
-	return (n * factor).toFixed(1);
-}
-
-/* AT+ECELL returns the serving cell followed by neighbour entries, each 15
- * comma separated fields (rat, cellid, tac, mcc, mnc, pci, rsrp, rsrq, ...,
- * sinr, ..., arfcn). The response carries the entry count first. */
-function parseNeighbours(text) {
-	let line = String(text || '').split(/\r?\n/).find(l => l.indexOf('+ECELL:') === 0);
-	if (!line)
-		return [];
-	let tokens = line.replace(/^\+ECELL:\s*/, '').split(',').map(t => t.trim().replace(/^"|"$/g, ''));
-	let entries = [];
-	for (let i = 1; i + 15 <= tokens.length; i += 15)
-		entries.push(tokens.slice(i, i + 15));
-	return entries.slice(1).map(e => ({
-		pci: e[5],
-		rsrp: signed(e[6], 140),
-		rsrq: scaled(e[7], 255, -0.1),
-		sinr: scaled(e[11], 255, 0.1),
-		arfcn: e[14]
-	}));
-}
-
 return view.extend({
 	load() { return callStatus(); },
 
@@ -142,7 +108,7 @@ return view.extend({
 
 			common.card(_('邻区测量'), E('div', {}, [
 				E('div', { id: 'a6-neighbours' }, E('p', { 'class': 'a6-note' }, _('读取中…'))),
-				E('p', { 'class': 'a6-note' }, _('来自 AT+ECELL 的邻区列表；服务小区见概览。'))
+				E('p', { 'class': 'a6-note' }, _('来自模组 API 的邻区测量；服务小区见概览。'))
 			]))
 		]);
 
@@ -156,7 +122,7 @@ return view.extend({
 		if (!box)
 			return;
 		return callCells().then(c => {
-			let list = parseNeighbours(c?.serving?.output);
+			let list = (c.cells || []).filter(n => n.role === 'neighbor');
 			while (box.firstChild) box.removeChild(box.firstChild);
 			if (!list.length) {
 				box.appendChild(E('p', { 'class': 'a6-note' }, _('暂无邻区测量数据')));

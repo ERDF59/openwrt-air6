@@ -1,6 +1,5 @@
 #!/bin/sh /etc/rc.common
-# Air6 5G 模组状态采集器的 procd 包装。
-# 真正的采集循环在 /usr/bin/air6-modem-status（移植自 AIR6 的同名程序）。
+# Bounded read-only QuecOpen API snapshot supervisor.
 
 START=95
 STOP=05

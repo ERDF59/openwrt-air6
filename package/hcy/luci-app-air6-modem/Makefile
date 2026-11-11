@@ -1,21 +1,15 @@
 #
 # LuCI 5G modem management for Air6 (MT6990 / Quectel RG620T)
 #
-# 移植自 FiberHome AIR6 的 luci-app-5gmodem（同一颗 MT6990 集成模组），
-# 适配本仓库的 QuecOpen 固件：
-#   * 接口名 modem5g -> wan（本固件用 ql_datacall proto 起 wan）
-#   * board_ok 用 mipc_wan_cli 是否存在判断（本固件没有 fiberhome 的 board_name）
-#   * 少了 AIR6 私有的 nw_get_signal / show_register_status / sample_nw，
-#     信号与注册改走 atcid 的 AT；锁机页去掉（无 sample_nw）
-#
-# 用 package.mk 而不是 luci.mk：本包要装两个交叉编译出来的小程序，
-# luci.mk 的 install 段会自动覆盖自定义 install，装不进去。
+# Status and cell telemetry use the native QuecOpen RIL API via ubus.
+# Manual AT/SMS actions remain separate from read-only status polling.
+# C helpers are target binaries, so this package is architecture-specific.
 #
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-air6-modem
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=1
+PKG_RELEASE:=2
 
 PKG_LICENSE:=Apache-2.0
 PKG_MAINTAINER:=Air6 bring-up
@@ -28,14 +22,13 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=LuCI 5G modem management for Air6 (MT6990 / RG620T)
-  DEPENDS:=+rpcd +libuci +libubox +libubus +libblobmsg-json
-  PKGARCH:=all
+  DEPENDS:=+rpcd +libuci +libubox +libubus +libblobmsg-json +air6-modem-chain-only
 endef
 
 define Package/$(PKG_NAME)/description
 Cellular status, SMS, dial-up control and an AT terminal for the built-in
-MT6990 modem. Talks to the vendor atcid (127.0.0.1:17171) for AT commands and
-to mipc_wan_cli for the modem state that AT cannot report.
+MT6990 modem. Status, CA, EN-DC and cell measurements use the native QuecOpen
+RIL API. Manual AT commands remain available through the debug terminal.
 endef
 
 define Build/Prepare
@@ -44,6 +37,11 @@ define Build/Prepare
 endef
 
 define Build/Compile
+	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) \
+		-I$(STAGING_DIR)/usr/include -L$(TOPDIR)/package/vendor/air6-modem-chain-only/files/usr/lib \
+		-Wl,-rpath-link,$(TOPDIR)/package/vendor/air6-modem-chain-only/files/usr/lib \
+		-o $(PKG_BUILD_DIR)/air6-nw-api $(PKG_BUILD_DIR)/air6-nw-api.c \
+		-lqlril -lql_uinf -lblobmsg_json -lubox
 	$(TARGET_CC) $(TARGET_CFLAGS) $(TARGET_LDFLAGS) \
 		-o $(PKG_BUILD_DIR)/air6-modem-at $(PKG_BUILD_DIR)/air6-at.c
 	if [ -e $(STAGING_DIR)/usr/lib/libqlril.so ]; then \
@@ -56,6 +54,7 @@ endef
 define Package/$(PKG_NAME)/install
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/air6-modem-at $(1)/usr/bin/air6-modem-at
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/air6-nw-api $(1)/usr/bin/air6-nw-api
 	[ ! -f $(PKG_BUILD_DIR)/air6-modem-sms-send ] || \
 		$(INSTALL_BIN) $(PKG_BUILD_DIR)/air6-modem-sms-send $(1)/usr/bin/air6-modem-sms-send
 
@@ -114,9 +113,11 @@ endef
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
+	[ ! -x /etc/init.d/air6-ca-daemon ] || { /etc/init.d/air6-ca-daemon stop; /etc/init.d/air6-ca-daemon disable; } >/dev/null 2>&1
 	/etc/init.d/rpcd restart >/dev/null 2>&1
 	/etc/init.d/air6-modem-status enable >/dev/null 2>&1
 	/etc/init.d/air6-modem-status restart >/dev/null 2>&1
+	[ ! -x /etc/init.d/uhttpd ] || /etc/init.d/uhttpd restart >/dev/null 2>&1
 	rm -f /tmp/luci-indexcache
 	rm -rf /tmp/luci-modulecache
 }

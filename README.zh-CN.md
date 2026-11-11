@@ -149,3 +149,5 @@ APK 构建签名使用构建者自己的密钥，原私钥没有公开。Web 更
 
 ![系统与自定义首页](docs/images/system.png)
 
+
+- [蜂窝 API：CA、EN-DC 与小区测量说明](docs/cellular-telemetry-api.md)

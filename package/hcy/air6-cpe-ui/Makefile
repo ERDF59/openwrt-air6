@@ -2,7 +2,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=air6-cpe-ui
 PKG_VERSION:=1.0.0
-PKG_RELEASE:=6
+PKG_RELEASE:=7
 
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=Air6
@@ -42,14 +42,12 @@ define Package/air6-cpe-ui/install
 	$(INSTALL_DATA) ./files/www/cpe/logo.svg $(1)/www/cpe/logo.svg
 	$(INSTALL_DIR) $(1)/usr/share/air6-cpe $(1)/etc/air6-cpe $(1)/usr/sbin
 	$(INSTALL_DATA) ./files/usr/share/air6-cpe/update.uc $(1)/usr/share/air6-cpe/update.uc
-	if [ -f ./files/etc/air6-cpe/update.pub ]; then $(INSTALL_DATA) ./files/etc/air6-cpe/update.pub $(1)/etc/air6-cpe/update.pub; fi
+	$(INSTALL_DATA) ./files/etc/air6-cpe/update.pub $(1)/etc/air6-cpe/update.pub
 	$(INSTALL_DATA) ./files/etc/air6-cpe/home.json $(1)/etc/air6-cpe/home.json
 	$(INSTALL_BIN) ./files/usr/sbin/air6-ui-slotctl $(1)/usr/sbin/air6-ui-slotctl
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./files/usr/sbin/air6-ui-band-job $(1)/usr/sbin/air6-ui-band-job
-	$(INSTALL_BIN) ./files/usr/sbin/air6-ca-daemon $(1)/usr/sbin/air6-ca-daemon
 	$(INSTALL_DIR) $(1)/etc/init.d
-	$(INSTALL_BIN) ./files/etc/init.d/air6-ca-daemon $(1)/etc/init.d/air6-ca-daemon
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_BIN) ./files/etc/uci-defaults/90-air6-cpe-ui $(1)/etc/uci-defaults/90-air6-cpe-ui
 	$(INSTALL_DIR) $(1)/usr/share/rpcd/ucode
@@ -62,7 +60,7 @@ define Package/air6-cpe-ui/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	/etc/init.d/rpcd restart >/dev/null 2>&1
-	/etc/init.d/uhttpd reload >/dev/null 2>&1
+	/etc/init.d/uhttpd restart >/dev/null 2>&1
 }
 endef
 

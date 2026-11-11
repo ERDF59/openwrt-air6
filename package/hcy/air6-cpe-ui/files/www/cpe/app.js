@@ -319,7 +319,7 @@ function caAllCells() {
   return store.ca && Number.isFinite(age) && age >= -30 && age <= 60 && Array.isArray(store.ca.cells) ? store.ca.cells : [];
 }
 function caDlCells() { return caAllCells().filter(c => c.dir === 'dl'); }
-function caIsActive() { return caDlCells().filter(c => c.state === 2).length > 1; }
+function caIsActive() { return ['lte','nr'].some(rat => caDlCells().filter(c => c.rat === rat && c.state === 2).length > 1); }
 function caBandText(c) { return (c.rat === 'nr' ? 'n' : 'B') + c.band; }
 function caSummaryText() {
   if (!store.ca) return '载波数据采集不可用';
@@ -327,7 +327,7 @@ function caSummaryText() {
   if (!d.length) return '暂无有效载波数据';
   if (d.length === 1) return '单载波 · ' + caBandText(d[0]) + ' ' + d[0].bw;
   const active = d.filter(c => c.state === 2);
-  return (active.length > 1 ? active.length + ' 个下行载波激活' : d.length + ' 个下行载波已配置，未确认聚合激活') + ' · ' + d.map(caBandText).join(' + ');
+  return (caIsActive() ? active.length + ' 个下行载波激活' : d.length + ' 个下行载波已配置，未确认聚合激活') + ' · ' + d.map(caBandText).join(' + ');
 }
 function caAgeText() {
   const ts = store.ca && store.ca.ts;
@@ -339,13 +339,13 @@ function caAgeText() {
 }
 function caLteText() {
   if (!caAllCells().length) return '—';
-  const v = store.ca && store.ca.lte_ca;
+  const v = store.ca && store.ca.ca && store.ca.ca.valid ? store.ca.ca.lte_active : null;
   if (v == null) return '—';
-  return v ? '已开启' : '已关闭';
+  return v ? '已激活' : '未激活';
 }
 function caBandsText() {
   if (!caAllCells().length) return '—';
-  const b = store.ca && store.ca.nr_ca && store.ca.nr_ca.bands;
+  const b = [...new Set(caDlCells().filter(c => c.rat === 'nr').map(c => c.band))];
   return (b && b.length) ? b.map(x => 'n' + x).join(' / ') : '—';
 }
 
@@ -795,7 +795,7 @@ const OverviewView = {
                 <tr v-if="!caAll.length"><td colspan="7" class="empty">暂无载波数据</td></tr>
               </tbody>
             </table>
-            <p class="muted" style="font-size:12px;margin:10px 0 0">LTE CA 开关：{{ caLte }} · NR CA 频段：{{ caBands }}。上下行分别列出，聚合状态按激活的下行载波判断。</p>
+            <p class="muted" style="font-size:12px;margin:10px 0 0">LTE CA 激活：{{ caLte }} · NR 载波频段：{{ caBands }}。LTE 与 NR 分别判断聚合；双连接单独显示。</p>
           </div>
         </div>
       </div>
@@ -963,20 +963,22 @@ const CellularView = {
               <button class="btn ghost" @click="loadCells">刷新</button>
               <span class="muted" style="font-size:12px">{{ cellsNote }}</span>
             </div>
-            <table>
-              <thead><tr><th>项目</th><th>值</th></tr></thead>
-              <tbody>
-                <tr v-for="(v,k) in cellRows" :key="k"><td>{{ k }}</td><td class="mono">{{ v }}</td></tr>
-                <tr v-if="!Object.keys(cellRows).length"><td colspan="2" class="empty">暂无数据，点击刷新</td></tr>
-              </tbody>
-            </table>
+            <p class="muted">{{ endcText }}</p>
+            <h4>服务小区与邻区</h4>
+            <div style="overflow-x:auto"><table><thead><tr><th>角色 / RAT</th><th>PCI</th><th>ARFCN</th><th>频段</th><th>带宽</th><th>RSRP</th><th>RSRQ</th><th>SINR</th></tr></thead>
+              <tbody><tr v-for="(c,i) in apiCells" :key="i"><td>{{ c.role === 'serving' ? '服务' : '邻区' }} / {{ c.rat }}</td><td>{{ c.pci ?? '—' }}</td><td>{{ c.arfcn ?? '—' }}</td><td>{{ c.band ? (c.rat === 'NR' ? 'n' : 'B') + c.band : '未知' }}</td><td>{{ c.dl_bandwidth_mhz != null ? c.dl_bandwidth_mhz + ' MHz' : '未知' }}</td><td>{{ c.rsrp ?? '—' }} dBm</td><td>{{ c.rsrq ?? '—' }} dB</td><td>{{ c.sinr ?? '—' }} dB</td></tr><tr v-if="!apiCells.length"><td colspan="8">暂无有效测量</td></tr></tbody></table></div>
+            <h4>主辅载波 · CA</h4>
+            <div style="overflow-x:auto"><table><thead><tr><th>RAT / 角色</th><th>频段</th><th>PCI / ARFCN</th><th>下行 / 上行带宽</th><th>状态</th><th>MIMO 下 / 上</th><th>MCS 下 / 上</th></tr></thead><tbody><tr v-for="(c,i) in telemetry.carriers || []" :key="i"><td>{{ c.rat }} {{ c.role }}</td><td>{{ c.rat === 'NR' ? 'n' : 'B' }}{{ c.band }}</td><td>{{ c.pci }} / {{ c.arfcn }}</td><td>{{ c.dl_bandwidth_mhz ?? '—' }} / {{ c.ul_bandwidth_mhz ?? '—' }} MHz</td><td>{{ c.role === 'PCC' ? '主载波' : c.active ? '已激活' : '已配置 / 未激活' }}</td><td>{{ c.dl_mimo }} / {{ c.ul_mimo }}</td><td>{{ c.dl_mcs }} / {{ c.ul_mcs }}</td></tr><tr v-if="!(telemetry.carriers || []).length"><td colspan="7">暂无载波数据</td></tr></tbody></table></div>
+            <h4>主辅小区测量</h4>
+            <div style="overflow-x:auto"><table><thead><tr><th>RAT / 角色</th><th>RSRP / RSRQ / SNR 报告索引</th><th>RSSI</th><th>Rank / 路损</th><th>最佳波束</th><th>波束 RSRP / SSB SNR</th></tr></thead><tbody><tr v-for="(m,i) in telemetry.measurements || []" :key="i"><td>{{ m.rat }} {{ m.role }} {{ m.index }}</td><td>{{ m.rsrp_index }} / {{ m.rsrq_index }} / {{ m.snr_index }}</td><td>{{ m.rssi_dbm ?? '—' }} dBm</td><td>{{ m.rank_indicator || '—' }} / {{ m.path_loss_db }} dB</td><td>{{ m.best_beam_id ?? '—' }}</td><td>{{ m.best_beam_rsrp_dbm ?? '—' }} dBm / {{ m.ssb_snr_db ?? '—' }} dB</td></tr></tbody></table></div>
+            <p class="muted">测量报告索引按 API 原值显示；邻区未报告的频段和带宽显示未知。EN-DC 可用不代表双连接已激活。</p>
           </div>
         </div>
       </div>
 
     </div>
   </div>`,
-  data() { return { ratMode: null, cellsNote: '', cells: {}, apn: '', apnTouched: false, apnBusy: false, iptype: '', networkIface: '', networkLoading: true, lteOptions:[1,3,5,7,8,20,28,38,40,41,42,43], nrOptions:[1,3,5,7,8,20,28,38,40,41,77,78,79], lteSelected:[], nrSelected:[], bandReady:false, bandReading:false, bandApplying:false, bandMessage:'展开后读取实际频段', bandJobTimer:0, licenseBusy:false, machineId:'',licenseState:'',licenseToken:'',licenseMessage:'' }; },
+  data() { return { ratMode: null, cellsNote: '', telemetry: {}, apn: '', apnTouched: false, apnBusy: false, iptype: '', networkIface: '', networkLoading: true, lteOptions:[1,3,5,7,8,20,28,38,40,41,42,43], nrOptions:[1,3,5,7,8,20,28,38,40,41,77,78,79], lteSelected:[], nrSelected:[], bandReady:false, bandReading:false, bandApplying:false, bandMessage:'展开后读取实际频段', bandJobTimer:0, licenseBusy:false, machineId:'',licenseState:'',licenseToken:'',licenseMessage:'' }; },
   computed: {
     editing() { return false; },
     st() { return store.status || null; },
@@ -998,20 +1000,23 @@ const CellularView = {
     caNote() { return caAgeText(); },
     caLte() { return caLteText(); },
     caBands() { return caBandsText(); },
-    cellRows() {
-      const out = {};
-      Object.keys(this.cells || {}).forEach(k => {
-        const s = String(this.cells[k] || '').trim();
-        if (s) out[k] = s;
-      });
-      return out;
+    apiCells() { return (this.telemetry.cells || []).map(c => {
+      const carrier = (this.telemetry.carriers || []).find(v => v.rat === c.rat && v.pci === c.pci && v.arfcn === c.arfcn);
+      return carrier ? {...c, band: carrier.band, dl_bandwidth_mhz: carrier.dl_bandwidth_mhz} : c;
+    }); },
+    endcText() {
+      const e = this.telemetry.endc;
+      if (!e || !e.valid) return 'EN-DC：未知';
+      return 'EN-DC 支持：' + (e.available ? '是' : '否') + ' · NR 双连接限制：' + (e.restricted ? '有' : '无') + ' · NSA 注册：' + (e.nsa_registered ? '是' : '否');
     },
+
   },
   mounted() {
     this.readBandLock();
-    this.readLicense();
+    this.loadCells();
     this.apn = (store.status && store.status.apn) || '';
     ubus('luci.air6modem','get_network').then(n=>{ this.networkIface=n.interface || ''; if(['1','2','3'].includes(String(n.iptype))) this.iptype=String(n.iptype); }).catch(e=>toast('PDP 配置读取失败：'+e.message)).finally(()=>{this.networkLoading=false;});
+    this.$watch(() => store.status, () => this.loadCells());
     this.$watch(() => store.status && store.status.apn, v => { if (!this.apnTouched) this.apn = v || ''; });
   },
   beforeUnmount() { clearTimeout(this.bandJobTimer); },
@@ -1106,16 +1111,9 @@ const CellularView = {
       try {
         const r = await ubus('luci.air6modem', 'get_cells');
         if (r && r.initializing) throw new Error('模组正在初始化，请稍后重试');
-        requireSuccess(r && r.serving);
-        const serving = (r && r.serving && r.serving.output) || '';
-        const rows = {};
-        serving.split('\n').forEach(line => {
-          const m = /^\+?([A-Za-z0-9_]+):\s*(.+)$/.exec(line.trim());
-          if (m) rows[m[1]] = m[2];
-        });
-        if (!Object.keys(rows).length && serving) rows['原始输出'] = serving;
-        this.cells = rows;
-        this.cellsNote = '';
+        if (r.stale) throw new Error('API 数据已过期');
+        this.telemetry = r;
+        this.cellsNote = '模组 API · 缓存 ' + r.cache_age + ' 秒';
       } catch (e) { this.cellsNote = '读取失败：' + e.message; }
     },
     send() { sendAt(); },

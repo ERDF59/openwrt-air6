@@ -10,9 +10,6 @@ uci commit uhttpd
 
 /etc/init.d/rpcd restart >/dev/null 2>&1
 /etc/init.d/uhttpd reload >/dev/null 2>&1
-[ -x /usr/sbin/air6-ca-daemon ] && {
-	/etc/init.d/air6-ca-daemon enable >/dev/null 2>&1
-	/etc/init.d/air6-ca-daemon start >/dev/null 2>&1
-}
+
 
 exit 0
