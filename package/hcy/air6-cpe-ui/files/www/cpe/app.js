@@ -323,7 +323,7 @@ function caIsActive() { return ['lte','nr'].some(rat => caDlCells().filter(c => 
 function caBandText(c) { return (c.rat === 'nr' ? 'n' : 'B') + c.band; }
 function caSummaryText() {
   if (!store.ca) return '载波数据采集不可用';
-  if (store.ca.ca && !store.ca.ca.valid) return '载波接口未返回有效数据';
+  if (store.ca.ca && !store.ca.ca.valid) return caDlCells().length ? 'CA 状态未知 · 显示服务小区' : '载波接口未返回有效数据';
   const d = caDlCells();
   if (!d.length) return '暂无有效载波数据';
   if (d.length === 1) return '单载波 · ' + caBandText(d[0]) + ' ' + d[0].bw;

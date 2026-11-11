@@ -272,7 +272,21 @@ function get_ca() {
                 state: c.role == 'PCC' ? 2 : c.state });
         }
     }
+    // A failed CA query does not invalidate independently reported serving cells.
+    // Preserve the failure status; never infer SCCs, bandwidth or CA activation.
+    let serving_only = false;
+    if (!cells.length && data.ca && !data.ca.valid && data.REGISTERED == 'YES') {
+        for (let c in (data.cells || [])) {
+            if (c.role != 'serving' || !c.band || (c.rat != 'NR' && c.rat != 'LTE')) continue;
+            serving_only = true;
+            push(cells, { rat: lc(c.rat), role: 'PCC', idx: 0, dir: 'dl',
+                band: c.band, pci: c.pci, arfcn: c.arfcn, bw: '未知',
+                state: 2, source: 'serving_cell' });
+        }
+    }
     let result = { ok: true, ts: data.UPDATED, source: data.source, cells: cells,
+        carrier_source: serving_only ? 'serving_cell' : 'ca',
+        ca_query_error: data.api_errors?.ca,
         ca: data.ca, endc: data.endc, measurements: data.measurements || [] };
     return { ok: true, raw: sprintf('%J', result), age: age, stale: false };
 }
