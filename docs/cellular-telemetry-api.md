@@ -101,3 +101,16 @@ python3 scripts/test-cellular-telemetry.py root@ROUTER
 ```
 
 The test prints section validity, not IMSI/ICCID/IMEI or raw snapshots.
+
+
+## CA interpretation correction (2026-11-11)
+
+Carrier summaries count LTE and NR separately: an LTE anchor plus two active
+NR carriers is NR 2CC, not 3CC intra-RAT CA. An LTE carrier and one NR carrier
+alone do not establish CA. Configured but deactivated SCCs are excluded.
+The cell table deduplicates reports by RAT/PCI/ARFCN; repeated measurements
+do not imply another component carrier. Regression check:
+
+```sh
+node scripts/test-ca-semantics.cjs
+```

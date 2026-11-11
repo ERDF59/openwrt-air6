@@ -323,11 +323,15 @@ function caIsActive() { return ['lte','nr'].some(rat => caDlCells().filter(c => 
 function caBandText(c) { return (c.rat === 'nr' ? 'n' : 'B') + c.band; }
 function caSummaryText() {
   if (!store.ca) return '载波数据采集不可用';
+  if (store.ca.ca && !store.ca.ca.valid) return '载波接口未返回有效数据';
   const d = caDlCells();
   if (!d.length) return '暂无有效载波数据';
   if (d.length === 1) return '单载波 · ' + caBandText(d[0]) + ' ' + d[0].bw;
-  const active = d.filter(c => c.state === 2);
-  return (caIsActive() ? active.length + ' 个下行载波激活' : d.length + ' 个下行载波已配置，未确认聚合激活') + ' · ' + d.map(caBandText).join(' + ');
+  const active = ['lte', 'nr'].map(rat => ({rat, count: d.filter(c => c.rat === rat && c.state === 2).length}));
+  const aggregated = active.filter(x => x.count > 1);
+  if (aggregated.length) return aggregated.map(x => x.rat.toUpperCase() + ' ' + x.count + 'CC').join(' / ') + ' 聚合激活 · ' + d.map(caBandText).join(' + ');
+  const dual = active.every(x => x.count > 0);
+  return (dual ? 'LTE + NR 双载波，未确认同制式 CA' : d.length + ' 个下行载波已配置，未确认聚合激活') + ' · ' + d.map(caBandText).join(' + ');
 }
 function caAgeText() {
   const ts = store.ca && store.ca.ts;
@@ -1000,10 +1004,17 @@ const CellularView = {
     caNote() { return caAgeText(); },
     caLte() { return caLteText(); },
     caBands() { return caBandsText(); },
-    apiCells() { return (this.telemetry.cells || []).map(c => {
-      const carrier = (this.telemetry.carriers || []).find(v => v.rat === c.rat && v.pci === c.pci && v.arfcn === c.arfcn);
-      return carrier ? {...c, band: carrier.band, dl_bandwidth_mhz: carrier.dl_bandwidth_mhz} : c;
-    }); },
+    apiCells() {
+      const seen = new Set();
+      return (this.telemetry.cells || []).filter(c => {
+        const key = [c.rat, c.pci, c.arfcn].join(':');
+        if (seen.has(key)) return false;
+        seen.add(key); return true;
+      }).map(c => {
+        const carrier = (this.telemetry.carriers || []).find(v => v.rat === c.rat && v.pci === c.pci && v.arfcn === c.arfcn);
+        return carrier ? {...c, band: carrier.band, dl_bandwidth_mhz: carrier.dl_bandwidth_mhz} : c;
+      });
+    },
     endcText() {
       const e = this.telemetry.endc;
       if (!e || !e.valid) return 'EN-DC：未知';
