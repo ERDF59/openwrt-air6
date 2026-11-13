@@ -144,3 +144,7 @@ Captured after real China Telecom **5G n78** registration and data connectivity.
 ![System settings](docs/images/system.png)
 
 - [Cellular API telemetry: CA, EN-DC and cell measurements](docs/cellular-telemetry-api.md)
+
+## License and project notice / 许可与项目声明
+
+See [licensing scope / 许可范围](LICENSING.md) and [disclaimer, trademarks and rights requests / 免责声明、商标及权利反馈](DISCLAIMER.md).

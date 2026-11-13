@@ -151,3 +151,7 @@ APK 构建签名使用构建者自己的密钥，原私钥没有公开。Web 更
 
 
 - [蜂窝 API：CA、EN-DC 与小区测量说明](docs/cellular-telemetry-api.md)
+
+## License and project notice / 许可与项目声明
+
+See [licensing scope / 许可范围](LICENSING.md) and [disclaimer, trademarks and rights requests / 免责声明、商标及权利反馈](DISCLAIMER.md).
